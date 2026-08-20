@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Todos os Casos — Sistema de Sinistros</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 1100px; margin: 40px auto; padding: 0 20px; }
+    h1 { color: #1a1a2e; }
+    nav { margin-bottom: 25px; padding: 12px; background: #f2f2f2; border-radius: 8px; }
+    nav a { margin-right: 18px; color: #1a1a2e; font-weight: bold; text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
+    #upload-box { border: 2px dashed #ccc; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
+    #filtros { margin-bottom: 20px; }
+    #filtros select, #filtros button { padding: 6px 10px; margin-right: 10px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 13px; }
+    th { background: #1a1a2e; color: white; }
+    #mensagem { margin-top: 10px; font-weight: bold; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="/index.html">Todos os Casos</a>
+    <a href="/dashboard.html">Dashboard</a>
+    <a href="/pagar-agora.html">Pagar Agora</a>
+    <a href="/exportar">Exportar Excel</a>
+  </nav>
+
+  <h1>Todos os Casos</h1>
+
+  <div id="upload-box">
+    <h3>Enviar documento (PDF, DOCX, ZIP, JPG ou PNG)</h3>
+    <input type="file" id="arquivo" accept=".pdf,.docx,.zip,.jpg,.jpeg,.png">
+    <button id="btn-enviar">Enviar</button>
+    <div id="mensagem"></div>
+  </div>
+
+  <div id="filtros">
+    <label>Status:
+      <select id="filtro-status">
+        <option value="">Todos</option>
+        <option value="NOVO">NOVO</option>
+        <option value="PRONTO PARA PAGAR">PRONTO PARA PAGAR</option>
+        <option value="EM FRANQUIA">EM FRANQUIA</option>
+        <option value="AGUARDANDO DOC">AGUARDANDO DOC</option>
+        <option value="EM CARÊNCIA / ANÁLISE">EM CARÊNCIA / ANÁLISE</option>
+        <option value="NEGADO">NEGADO</option>
+        <option value="AGUARDANDO OCR MANUAL">AGUARDANDO OCR MANUAL</option>
+      </select>
+    </label>
+    <label>Parceiro:
+      <select id="filtro-parceiro">
+        <option value="">Todos</option>
+      </select>
+    </label>
+    <button id="btn-filtrar">Filtrar</button>
+    <button id="btn-limpar">Limpar filtros</button>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Segurado</th>
+        <th>CPF/CCB</th>
+        <th>Parceiro</th>
+        <th>Cobertura</th>
+        <th>Data evento</th>
+        <th>Valor parcela</th>
+        <th>Teto/parcela (seguro)</th>
+        <th>Parcelas cobertas</th>
+        <th>Carência (dias)</th>
+        <th>Franquia até</th>
+        <th>CIA</th>
+        <th>Valor a pagar</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody id="tabela-casos"></tbody>
+  </table>
+
+  <script>
+    function linhaHtml(caso) {
+      return `
+        <tr>
+          <td>${caso.id}</td>
+          <td>${caso.segurado || caso.nome_arquivo}</td>
+          <td>${caso.cpf_ccb || '-'}</td>
+          <td>${caso.parceiro || '-'}</td>
+          <td>${caso.cobertura || '-'}</td>
+          <td>${caso.data_evento ? new Date(caso.data_evento).toLocaleDateString('pt-BR') : '-'}</td>
+          <td>${caso.valor_parcela ? 'R$ ' + Number(caso.valor_parcela).toFixed(2) : '-'}</td>
+          <td>${caso.teto_parcela_produto ? 'R$ ' + Number(caso.teto_parcela_produto).toFixed(2) : '-'}</td>
+          <td>${caso.numero_parcelas_cobertas_produto ?? '-'}</td>
+          <td>${caso.carencia_dias ?? '-'}</td>
+          <td>${caso.franquia_data ? new Date(caso.franquia_data).toLocaleDateString('pt-BR') : '-'}</td>
+          <td>${caso.cia || '-'}</td>
+          <td>${caso.valor_a_pagar !== null ? 'R$ ' + Number(caso.valor_a_pagar).toFixed(2) : '-'}</td>
+          <td><b>${caso.status}</b>${caso.motivo_negacao ? ' <br><small>' + caso.motivo_negacao + '</small>' : ''}</td>
+        </tr>
+      `;
+    }
+
+    async function carregarCasos() {
+      const status = document.getElementById('filtro-status').value;
+      const parceiro = document.getElementById('filtro-parceiro').value;
+      const parametros = new URLSearchParams();
+      if (status) parametros.set('status', status);
+      if (parceiro) parametros.set('parceiro', parceiro);
+
+      const resposta = await fetch('/casos?' + parametros.toString());
+      const casos = await resposta.json();
+      document.getElementById('tabela-casos').innerHTML = casos.map(linhaHtml).join('');
+
+      // Preenche o dropdown de parceiros dinamicamente, sem duplicar nomes
+      const selectParceiro = document.getElementById('filtro-parceiro');
+      const parceiroSelecionado = selectParceiro.value;
+      const parceirosUnicos = [...new Set(casos.map(c => c.parceiro).filter(Boolean))];
+      selectParceiro.innerHTML = '<option value="">Todos</option>' +
+        parceirosUnicos.map(p => `<option value="${p}">${p}</option>`).join('');
+      selectParceiro.value = parceiroSelecionado;
+    }
+
+    document.getElementById('btn-filtrar').addEventListener('click', carregarCasos);
+    document.getElementById('btn-limpar').addEventListener('click', () => {
+      document.getElementById('filtro-status').value = '';
+      document.getElementById('filtro-parceiro').value = '';
+      carregarCasos();
+    });
+
+    document.getElementById('btn-enviar').addEventListener('click', async () => {
+      const input = document.getElementById('arquivo');
+      const mensagem = document.getElementById('mensagem');
+      if (!input.files[0]) {
+        mensagem.textContent = 'Escolha um arquivo primeiro.';
+        return;
+      }
+      const formData = new FormData();
+      formData.append('documento', input.files[0]);
+
+      mensagem.textContent = 'Enviando...';
+      const resposta = await fetch('/upload', { method: 'POST', body: formData });
+      const resultado = await resposta.json();
+
+      if (resposta.ok) {
+        mensagem.textContent = resultado.mensagem + (resultado.id ? ' ID: ' + resultado.id : '');
+        input.value = '';
+        carregarCasos();
+      } else {
+        mensagem.textContent = 'Erro: ' + resultado.erro;
+      }
+    });
+
+    carregarCasos();
+  </script>
+</body>
+</html>

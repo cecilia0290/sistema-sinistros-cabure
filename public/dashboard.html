@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Dashboard — Sistema de Sinistros</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 1100px; margin: 40px auto; padding: 0 20px; }
+    h1 { color: #1a1a2e; }
+    nav { margin-bottom: 25px; padding: 12px; background: #f2f2f2; border-radius: 8px; }
+    nav a { margin-right: 18px; color: #1a1a2e; font-weight: bold; text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
+    .cartoes { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 30px; }
+    .cartao { background: #1a1a2e; color: white; padding: 20px; border-radius: 8px; min-width: 220px; }
+    .cartao .numero { font-size: 28px; font-weight: bold; margin-top: 6px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+    th { background: #1a1a2e; color: white; }
+  </style>
+</head>
+<body>
+  <nav>
+    <a href="/index.html">Todos os Casos</a>
+    <a href="/dashboard.html">Dashboard</a>
+    <a href="/pagar-agora.html">Pagar Agora</a>
+    <a href="/exportar">Exportar Excel</a>
+  </nav>
+
+  <h1>Dashboard</h1>
+
+  <div class="cartoes">
+    <div class="cartao">
+      <div>Valor total pronto para pagar</div>
+      <div class="numero" id="cartao-total-pagar">R$ 0,00</div>
+    </div>
+    <div class="cartao">
+      <div>Total de casos</div>
+      <div class="numero" id="cartao-total-casos">0</div>
+    </div>
+  </div>
+
+  <h3>Casos por status</h3>
+  <table>
+    <thead><tr><th>Status</th><th>Quantidade</th></tr></thead>
+    <tbody id="tabela-status"></tbody>
+  </table>
+
+  <h3 style="margin-top:30px;">Casos por parceiro</h3>
+  <table>
+    <thead><tr><th>Parceiro</th><th>Quantidade</th></tr></thead>
+    <tbody id="tabela-parceiro"></tbody>
+  </table>
+
+  <script>
+    async function carregarDashboard() {
+      const resposta = await fetch('/api/dashboard');
+      const dados = await resposta.json();
+
+      document.getElementById('cartao-total-pagar').textContent =
+        'R$ ' + Number(dados.totalAPagar).toFixed(2);
+
+      const totalCasos = dados.porStatus.reduce((soma, item) => soma + item.quantidade, 0);
+      document.getElementById('cartao-total-casos').textContent = totalCasos;
+
+      document.getElementById('tabela-status').innerHTML = dados.porStatus
+        .map(item => `<tr><td>${item.status}</td><td>${item.quantidade}</td></tr>`)
+        .join('');
+
+      document.getElementById('tabela-parceiro').innerHTML = dados.porParceiro
+        .map(item => `<tr><td>${item.parceiro}</td><td>${item.quantidade}</td></tr>`)
+        .join('');
+    }
+
+    carregarDashboard();
+  </script>
+</body>
+</html>
