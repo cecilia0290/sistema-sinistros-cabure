@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Detalhe do Caso — Caburé Sinistros</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;650&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/estilo.css">
+</head>
+<body>
+  <div class="app-layout">
+    <div id="sidebar" class="sidebar"></div>
+
+    <div class="main-content">
+      <div class="page" id="conteudo-pagina">
+        <a href="/index.html" class="breadcrumb">← Voltar para casos</a>
+        <div class="vazio" id="carregando">Carregando caso...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function classeBadge(status) {
+      const mapa = {
+        'PRONTO PARA PAGAR': 'badge-sucesso', 'PAGO': 'badge-sucesso',
+        'EM FRANQUIA': 'badge-alerta', 'AGUARDANDO DOC': 'badge-alerta', 'AGUARDANDO OCR MANUAL': 'badge-alerta',
+        'EM CARÊNCIA / ANÁLISE': 'badge-info',
+        'NOVO': 'badge-neutro',
+        'NEGADO': 'badge-perigo', 'CANCELADO': 'badge-perigo'
+      };
+      return mapa[status] || 'badge-neutro';
+    }
+
+    function fmtData(v) { return v ? new Date(v).toLocaleDateString('pt-BR') : '—'; }
+    function fmtMoeda(v) { return v !== null && v !== undefined ? 'R$ ' + Number(v).toFixed(2) : '—'; }
+
+    function iconePorExtensao(nome) {
+      const ext = (nome.split('.').pop() || '').toLowerCase();
+      if (ext === 'pdf') return '📄';
+      if (ext === 'docx' || ext === 'doc') return '📝';
+      if (['jpg', 'jpeg', 'png'].includes(ext)) return '🖼️';
+      return '📎';
+    }
+
+    function itemAnalise(status, titulo, detalhe) {
+      const icone = status === 'ok' ? '✓' : status === 'nao' ? '✕' : '!';
+      return `
+        <div class="analise-item">
+          <div class="analise-icone ${status}">${icone}</div>
+          <div class="analise-texto">
+            <div class="analise-titulo">${titulo}</div>
+            ${detalhe ? '<div class="analise-detalhe">' + detalhe + '</div>' : ''}
+          </div>
+        </div>`;
+    }
+
+    async function carregarCaso() {
+      const id = new URLSearchParams(window.location.search).get('id');
+      if (!id) {
+        document.getElementById('carregando').textContent = 'Nenhum caso informado na URL.';
+        return;
+      }
+
+      const [respCaso, respDocs, respHist] = await Promise.all([
+        fetch('/api/casos/' + id),
+        fetch('/api/documentos/' + id),
+        fetch('/api/historico/' + id)
+      ]);
+
+      if (!respCaso.ok) {
+        document.getElementById('carregando').textContent = 'Caso não encontrado.';
+        return;
+      }
+
+      const caso = await respCaso.json();
+      const documentos = await respDocs.json();
+      const historico = await respHist.json();
+
+      document.title = 'Caso #' + caso.id + ' — Caburé Sinistros';
+
+      // --- Análise: elegibilidade ---
+      let elegBloco;
+      if (caso.analise.elegibilidade.elegivel === true) {
+        elegBloco = itemAnalise('ok', 'Elegibilidade', 'Motivo de desligamento dentro dos códigos cobertos.');
+      } else if (caso.analise.elegibilidade.elegivel === false) {
+        elegBloco = itemAnalise('nao', 'Elegibilidade', caso.analise.elegibilidade.motivo);
+      } else {
+        elegBloco = itemAnalise('pendente', 'Elegibilidade', caso.analise.elegibilidade.motivo || 'Aguardando código do motivo de desligamento.');
+      }
+
+      // --- Análise: carência ---
+      let carBloco;
+      if (caso.analise.carencia.cumprida === true) {
+        carBloco = itemAnalise('ok', 'Carência', `${caso.analise.carencia.carenciaDias} dias entre contratação e evento — mínimo de 31 dias cumprido.`);
+      } else if (caso.analise.carencia.cumprida === false) {
+        carBloco = itemAnalise('nao', 'Carência', `Apenas ${caso.analise.carencia.carenciaDias} dias — abaixo do mínimo de 31 dias.`);
+      } else {
+        carBloco = itemAnalise('pendente', 'Carência', 'Aguardando data de contratação e/ou data do evento.');
+      }
+
+      // --- Análise: franquia ---
+      let franBloco;
+      const franquiaData = caso.analise.franquiaData;
+      if (franquiaData) {
+        const hoje = new Date();
+        const dataFranquia = new Date(franquiaData);
+        if (hoje >= dataFranquia) {
+          franBloco = itemAnalise('ok', 'Franquia', `Período encerrado em ${fmtData(franquiaData)}.`);
+        } else {
+          franBloco = itemAnalise('pendente', 'Franquia', `Ainda dentro do período — libera em ${fmtData(franquiaData)}.`);
+        }
+      } else {
+        franBloco = itemAnalise('pendente', 'Franquia', 'Aguardando data do evento para calcular.');
+      }
+
+      // --- Parcelas (visão simplificada — ver aviso) ---
+      const numParcelas = caso.numero_parcelas_cobertas_produto || 0;
+      let linhasParcelas = '';
+      for (let i = 1; i <= numParcelas; i++) {
+        linhasParcelas += `<tr><td>${i}ª parcela</td><td class="col-mono">${fmtMoeda(caso.valor_a_pagar)}</td><td><span class="badge badge-neutro">Pendente</span></td></tr>`;
+      }
+
+      document.getElementById('conteudo-pagina').innerHTML = `
+        <a href="/index.html" class="breadcrumb">← Voltar para casos</a>
+
+        <div class="caso-header">
+          <div>
+            <div class="caso-id">CASO #${String(caso.id).padStart(6, '0')}</div>
+            <h1 class="caso-nome">${caso.segurado || caso.nome_arquivo}</h1>
+            <div class="caso-sub">${caso.parceiro || 'Parceiro não identificado'}${caso.cia ? ' · CIA ' + caso.cia : ''}</div>
+          </div>
+          <span class="badge ${classeBadge(caso.status)}" style="font-size:13px; padding:6px 14px;">${caso.status}</span>
+        </div>
+
+        <div class="secao">
+          <h3>Resumo</h3>
+          <div class="resumo-grid">
+            <div class="resumo-item"><div class="rotulo">Valor da parcela</div><div class="valor">${fmtMoeda(caso.valor_parcela)}</div></div>
+            <div class="resumo-item"><div class="rotulo">Teto do seguro</div><div class="valor">${fmtMoeda(caso.teto_parcela_produto)}</div></div>
+            <div class="resumo-item"><div class="rotulo">Parcelas cobertas</div><div class="valor">${caso.numero_parcelas_cobertas_produto ?? '—'}</div></div>
+            <div class="resumo-item"><div class="rotulo">Data do evento</div><div class="valor">${fmtData(caso.data_evento)}</div></div>
+            <div class="resumo-item"><div class="rotulo">Valor a pagar</div><div class="valor destaque">${fmtMoeda(caso.valor_a_pagar)}</div></div>
+          </div>
+        </div>
+
+        <div class="secao">
+          <h3>Informações do segurado</h3>
+          <div class="resumo-grid">
+            <div class="resumo-item"><div class="rotulo">CPF / CCB</div><div class="valor">${caso.cpf_ccb || '—'}</div></div>
+            <div class="resumo-item"><div class="rotulo">Cobertura</div><div class="valor" style="font-family:'Inter',sans-serif; font-weight:500; font-size:13.5px;">${caso.cobertura || '—'}</div></div>
+            <div class="resumo-item"><div class="rotulo">Fundo</div><div class="valor" style="font-family:'Inter',sans-serif; font-weight:500; font-size:13.5px;">${caso.fundo || '—'}</div></div>
+            <div class="resumo-item"><div class="rotulo">Data de contratação</div><div class="valor">${fmtData(caso.data_contratacao)}</div></div>
+            <div class="resumo-item"><div class="rotulo">Data de admissão</div><div class="valor">${fmtData(caso.data_admissao)}</div></div>
+          </div>
+        </div>
+
+        <div class="secao">
+          <h3>Documentos (${documentos.length})</h3>
+          ${documentos.length > 0 ? `
+            <div class="doc-grid">
+              ${documentos.map(doc => `
+                <div class="doc-card">
+                  <div class="doc-icon">${iconePorExtensao(doc.nome_arquivo)}</div>
+                  <div class="doc-nome">${doc.nome_arquivo}</div>
+                  <div class="doc-meta">${fmtData(doc.data_upload)}</div>
+                  <div style="margin-top:6px;"><span class="badge ${doc.status_processamento === 'PROCESSADO' ? 'badge-sucesso' : 'badge-alerta'}">${doc.status_processamento}</span></div>
+                </div>
+              `).join('')}
+            </div>
+            <div class="aviso-caixa">Pré-visualização e download dos arquivos originais ainda não estão disponíveis nesta versão — hoje o sistema guarda o texto extraído de cada documento para consulta e auditoria.</div>
+          ` : '<div class="vazio">Nenhum documento vinculado a este caso.</div>'}
+        </div>
+
+        <div class="secao">
+          <h3>Análise do motor de regras</h3>
+          <div class="analise-lista">
+            ${elegBloco}
+            ${carBloco}
+            ${franBloco}
+          </div>
+          ${caso.motivo_negacao ? '<div class="aviso-caixa"><strong>Motivo do status atual:</strong> ' + caso.motivo_negacao + '</div>' : ''}
+        </div>
+
+        ${numParcelas > 0 ? `
+          <div class="secao">
+            <h3>Parcelas</h3>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Parcela</th><th>Valor</th><th>Situação</th></tr></thead>
+                <tbody>${linhasParcelas}</tbody>
+              </table>
+            </div>
+            <div class="aviso-caixa">O controle de pagamento parcela a parcela ainda não foi implementado — hoje o sistema calcula o valor total a pagar, mas o registro de qual parcela já foi paga é manual. Isso pode ser adicionado em uma próxima etapa.</div>
+          </div>
+        ` : ''}
+
+        <div class="secao">
+          <h3>Histórico (${historico.length})</h3>
+          ${historico.length > 0 ? `
+            <div class="timeline">
+              ${historico.map(item => `
+                <div class="timeline-item">
+                  <div class="timeline-dot"></div>
+                  <div class="timeline-texto">
+                    <div class="timeline-titulo">${item.campo} alterado</div>
+                    <div class="timeline-detalhe">${item.valor_anterior || '(vazio)'} → ${item.valor_novo || '(vazio)'}</div>
+                    <div class="timeline-meta">${item.usuario} · ${new Date(item.data_hora).toLocaleString('pt-BR')}</div>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          ` : '<div class="vazio">Nenhuma alteração registrada ainda.</div>'}
+        </div>
+      `;
+    }
+
+    carregarCaso();
+  </script>
+  <script src="/layout.js"></script>
+</body>
+</html>

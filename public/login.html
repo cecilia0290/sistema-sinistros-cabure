@@ -2,32 +2,55 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Login — Sistema de Sinistros</title>
-  <style>
-    body { font-family: Arial, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #f2f2f2; }
-    .caixa { background: white; padding: 30px 40px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); width: 300px; }
-    h1 { color: #1a1a2e; font-size: 20px; }
-    input { width: 100%; padding: 8px; margin-top: 6px; margin-bottom: 16px; box-sizing: border-box; }
-    button { width: 100%; padding: 10px; background: #1a1a2e; color: white; border: none; border-radius: 6px; cursor: pointer; }
-    #mensagem { color: #c0392b; margin-top: 10px; font-size: 14px; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Entrar — Caburé Sinistros</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;650&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/estilo.css">
 </head>
 <body>
-  <div class="caixa">
-    <h1>Sistema de Sinistros — Grupo Caburé</h1>
-    <label>Usuário</label>
-    <input type="text" id="usuario">
-    <label>Senha</label>
-    <input type="password" id="senha">
-    <button id="btn-entrar">Entrar</button>
-    <div id="mensagem"></div>
+  <div class="login-shell">
+    <div class="login-card">
+      <div class="login-brand">
+        <div class="brand-owl" style="background: linear-gradient(160deg, var(--navy-lighter), var(--navy));">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+            <circle cx="8" cy="11" r="4.2" fill="#0E1730"/><circle cx="16" cy="11" r="4.2" fill="#0E1730"/>
+            <circle cx="8" cy="11" r="2.1" fill="#E0B15C"/><circle cx="16" cy="11" r="2.1" fill="#E0B15C"/>
+            <path d="M12 14.5 L9.5 18 H14.5 Z" fill="#E0B15C"/>
+          </svg>
+        </div>
+        <span class="brand-wordmark">Caburé</span>
+        <span class="brand-sub">SISTEMA DE SINISTROS</span>
+      </div>
+      <hr class="login-divider">
+
+      <label>Usuário</label>
+      <input type="text" id="usuario" autofocus autocomplete="username">
+      <label>Senha</label>
+      <input type="password" id="senha" autocomplete="current-password">
+      <button id="btn-entrar" class="btn btn-primary">Entrar</button>
+      <div id="mensagem" class="login-erro" style="display:none;"></div>
+    </div>
+    <div class="login-rodape">Grupo Caburé · Perda de Renda</div>
   </div>
 
   <script>
-    document.getElementById('btn-entrar').addEventListener('click', async () => {
+    async function login() {
       const usuario = document.getElementById('usuario').value;
       const senha = document.getElementById('senha').value;
       const mensagem = document.getElementById('mensagem');
+      const botao = document.getElementById('btn-entrar');
+
+      if (!usuario || !senha) {
+        mensagem.textContent = 'Preencha usuário e senha.';
+        mensagem.style.display = 'block';
+        return;
+      }
+
+      botao.disabled = true;
+      botao.textContent = 'Entrando...';
+      mensagem.style.display = 'none';
 
       const resposta = await fetch('/login', {
         method: 'POST',
@@ -39,9 +62,16 @@
       if (resposta.ok) {
         window.location.href = '/index.html';
       } else {
+        botao.disabled = false;
+        botao.textContent = 'Entrar';
         mensagem.textContent = resultado.erro;
+        mensagem.style.display = 'block';
       }
-    });
+    }
+
+    document.getElementById('btn-entrar').addEventListener('click', login);
+    document.getElementById('senha').addEventListener('keydown', (e) => { if (e.key === 'Enter') login(); });
+    document.getElementById('usuario').addEventListener('keydown', (e) => { if (e.key === 'Enter') document.getElementById('senha').focus(); });
   </script>
 </body>
 </html>

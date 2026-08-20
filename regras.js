@@ -1,21 +1,6 @@
 // ============================================================================
 // Motor de Regras de Negócio — Sistema de Sinistros Grupo Caburé
 // ============================================================================
-// TUDO NESTE ARQUIVO É CÁLCULO DETERMINÍSTICO (código puro, sempre o mesmo
-// resultado para a mesma entrada). A IA NUNCA decide nada aqui — isso é
-// exigido pela Seção 1 e pela Seção 5 da especificação, para o sistema ser
-// auditável e seguro para uso financeiro real.
-//
-// Baseado na aba REGRAS da planilha real, atualizada em 19/08/2026.
-//
-// ATENÇÃO — PONTO A CONFIRMAR COM A EQUIPE (ver Seção 13 da especificação):
-// A regra da Seção 5.4 diz "até fevereiro/2026 = Caburé; a partir de março/2026
-// = MetLife", mas não deixa claro qual data usar como referência (contratação,
-// evento, ou processamento do caso). Este código usa a DATA DO EVENTO como
-// referência — procure o comentário "CONFIRMAR COM A EQUIPE" mais abaixo se
-// precisar trocar isso.
-// ============================================================================
-
 const CODIGOS_MOTIVO_COBERTOS = ['2', '48', '49']; // Seção 5.1
 
 function calcularDiasEntreDatas(dataInicio, dataFim) {
@@ -40,7 +25,6 @@ function calcularAnosCompletosTrabalhados(dataAdmissao, dataEvento) {
   return Math.floor(meses / 12);
 }
 
-// --- Seção 5.1 — Elegibilidade (motivo do sinistro) ---
 function verificarElegibilidade(caso) {
   if (!caso.motivo_desligamento_codigo) {
     return { elegivel: null, motivo: 'Código de motivo do desligamento não encontrado nos documentos — necessário revisão manual.' };
@@ -51,21 +35,18 @@ function verificarElegibilidade(caso) {
   return { elegivel: true, motivo: null };
 }
 
-// --- Seção 5.2 — Carência (mínimo 31 dias entre contratação e evento) ---
 function calcularCarencia(caso) {
   const dias = calcularDiasEntreDatas(caso.data_contratacao, caso.data_evento);
   if (dias === null) return { carenciaDias: null, cumprida: null };
   return { carenciaDias: dias, cumprida: dias >= 31 };
 }
 
-// --- Seção 5.3 — Franquia ---
 function calcularFranquia(caso) {
   if (!caso.data_evento) return null;
   const franquia = new Date(caso.data_evento);
   const ehSethi = (caso.parceiro || '').toUpperCase().includes('SETHI');
-
   if (ehSethi) {
-    franquia.setDate(franquia.getDate() + 31);
+    franquia.setDate(franquia.getDate() + 30);
   } else {
     const anosTrabalhados = calcularAnosCompletosTrabalhados(caso.data_admissao, caso.data_evento);
     franquia.setDate(franquia.getDate() + 31 + (anosTrabalhados * 3));
@@ -73,37 +54,29 @@ function calcularFranquia(caso) {
   return franquia;
 }
 
-// --- Seção 5.4 — Definição da CIA pagadora ---
 function calcularCia(caso) {
   const parceiro = (caso.parceiro || '').toUpperCase();
   if (!caso.data_evento) return null;
-
-  // CONFIRMAR COM A EQUIPE: usando data do evento como referência (ver aviso no topo do arquivo)
   const dataReferencia = new Date(caso.data_evento);
-
   if (parceiro.includes('SETHI')) {
     const corteAbril2026 = new Date('2026-04-01');
-    if (dataReferencia < corteAbril2026) return 'Caburé'; // base legada / até março 2026
-
+    if (dataReferencia < corteAbril2026) return 'Caburé';
     const mesesVinculo = calcularMesesEntreDatas(caso.data_admissao, caso.data_evento);
     if (mesesVinculo === null) return null;
     if (mesesVinculo >= 6 && mesesVinculo <= 12) return 'Caburé';
     if (mesesVinculo > 12) return 'MetLife';
-    return null; // vínculo com menos de 6 meses: regra não coberta explicitamente na Seção 5.4, revisar manualmente
+    return null;
   }
-
   const corteMarco2026 = new Date('2026-03-01');
   return dataReferencia < corteMarco2026 ? 'Caburé' : 'MetLife';
 }
 
-// --- Seção 5.5 — Valor a pagar = MÍNIMO(parcela do contrato; teto do produto) ---
 function calcularValorAPagar(caso) {
   if (caso.valor_parcela === null || caso.valor_parcela === undefined) return null;
   if (caso.teto_parcela_produto === null || caso.teto_parcela_produto === undefined) return null;
   return Math.min(Number(caso.valor_parcela), Number(caso.teto_parcela_produto));
 }
 
-// --- Seção 6 — Status final do caso ---
 function calcularStatus(caso, elegibilidade, carencia, franquia, valorAPagar) {
   if (!caso.data_contratacao || !caso.data_evento) {
     return { status: 'AGUARDANDO DOC', motivo: 'Faltam datas essenciais (contratação e/ou evento) para calcular carência e franquia.' };
@@ -130,7 +103,6 @@ function calcularStatus(caso, elegibilidade, carencia, franquia, valorAPagar) {
   return { status: 'PRONTO PARA PAGAR', motivo: null };
 }
 
-// --- Função principal: roda todas as regras acima para um caso ---
 function calcularCaso(caso) {
   const elegibilidade = verificarElegibilidade(caso);
   const carencia = calcularCarencia(caso);
@@ -149,4 +121,4 @@ function calcularCaso(caso) {
   };
 }
 
-module.exports = { calcularCaso };
+module.exports = { calcularCaso, verificarElegibilidade, calcularCarencia, calcularFranquia };

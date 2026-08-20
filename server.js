@@ -11,7 +11,7 @@ const AdmZip = require('adm-zip');
 const { createWorker } = require('tesseract.js');
 const Anthropic = require('@anthropic-ai/sdk');
 const pool = require('./db');
-const { calcularCaso } = require('./regras');
+const { calcularCaso, verificarElegibilidade, calcularCarencia, calcularFranquia } = require('./regras');
 const XLSX = require('xlsx');
 
 const app = express();
@@ -125,7 +125,13 @@ async function extrairTextoDeArquivo(caminhoArquivo) {
 
 // --- Extração estruturada por IA ---
 
+const MAX_CARACTERES_PARA_IA = 600000; // ~150 mil tokens, margem de seguranca abaixo do limite do modelo (200 mil tokens)
+
 async function extrairCamposComIA(textoDocumento) {
+  const textoParaAnalise = textoDocumento.length > MAX_CARACTERES_PARA_IA
+    ? textoDocumento.slice(0, MAX_CARACTERES_PARA_IA) + '\n\n[AVISO: texto truncado por ser muito extenso — apenas a primeira parte foi analisada. Revisar manualmente se necessario.]'
+    : textoDocumento;
+
   const prompt = `Você vai ler o texto de um documento de sinistro de seguro (perda de renda / seguro prestamista).
 Extraia APENAS os campos abaixo, exatamente como aparecem no texto. Não calcule nada, não deduza nada que não esteja explícito.
 Se um campo não existir no texto, devolva null para ele.
@@ -158,7 +164,7 @@ Responda SOMENTE com um JSON válido, sem nenhum texto antes ou depois, no forma
 
 Texto do documento:
 """
-${textoDocumento}
+${textoParaAnalise}
 """`;
 
   const resposta = await anthropic.messages.create({
@@ -195,7 +201,7 @@ async function buscarCasoPorCpfCcb(cpfCcbNormalizado) {
 async function registrarHistorico(casoId, campo, valorAnterior, valorNovo, usuario) {
   const antigoTexto = (valorAnterior === null || valorAnterior === undefined) ? null : String(valorAnterior);
   const novoTexto = (valorNovo === null || valorNovo === undefined) ? null : String(valorNovo);
-  if (antigoTexto === novoTexto) return;
+  if (antigoTexto === novoTexto) return; // não loga se nada mudou de verdade
 
   await pool.query(
     'INSERT INTO historico (caso_id, campo, valor_anterior, valor_novo, usuario) VALUES (?, ?, ?, ?, ?)',
@@ -269,6 +275,7 @@ async function processarUnidadeDocumental(nomeReferencia, textoExtraido, precisa
   return { casoId, eraNovo };
 }
 
+// Roda o motor de regras, e registra em "historico" qualquer mudança de status ou valor a pagar
 async function aplicarMotorDeRegras(casoId, usuario) {
   const [linhas] = await pool.query('SELECT * FROM casos WHERE id = ?', [casoId]);
   if (linhas.length === 0) return;
@@ -296,9 +303,14 @@ async function processarZip(caminhoZip) {
 
   entradas.forEach(entrada => {
     if (entrada.isDirectory) return;
-    const partesCaminho = entrada.entryName.split('/');
-    if (partesCaminho.length < 2) return;
-    const nomeDaPasta = partesCaminho[0];
+    // Remove partes vazias (ex.: zip criado no Mac pode ter barras duplicadas)
+    const partesCaminho = entrada.entryName.split('/').filter(Boolean);
+    if (partesCaminho.length < 2) return; // arquivo solto na raiz do zip, sem pasta — ignora
+
+    // Agrupa pela pasta MAIS PRÓXIMA do arquivo (o penúltimo item do caminho),
+    // não importa quantos níveis de pasta existam acima dela. Isso corrige o caso
+    // de ZIPs organizados como "pasta-mae/subpasta/NOME DO SEGURADO/documento.pdf".
+    const nomeDaPasta = partesCaminho[partesCaminho.length - 2];
     if (!pastasPorNome[nomeDaPasta]) pastasPorNome[nomeDaPasta] = [];
     pastasPorNome[nomeDaPasta].push(entrada);
   });
@@ -324,11 +336,23 @@ async function processarZip(caminhoZip) {
       fs.unlinkSync(caminhoTemporario);
     }
 
+    // Se, depois de filtrar por extensao aceita, sobrou texto vazio (ex.: a pasta so tinha uma
+    // planilha .xlsx solta ou outro arquivo que ainda nao sabemos ler), nao cria um caso fantasma.
+    if (textoAcumulado.trim().length === 0) continue;
+
     const resultado = await processarUnidadeDocumental(nomeDaPasta, textoAcumulado.trim(), algumPrecisaOcrManual);
     resultados.push(resultado);
   }
 
   return resultados;
+}
+
+async function criarCaso(nomeArquivoOuPasta, textoExtraido, status) {
+  const [resultado] = await pool.query(
+    'INSERT INTO casos (nome_arquivo, texto_extraido, status) VALUES (?, ?, ?)',
+    [nomeArquivoOuPasta, textoExtraido, status]
+  );
+  return resultado.insertId;
 }
 
 // --- Rotas ---
@@ -389,6 +413,26 @@ app.get('/casos', async (req, res) => {
   }
 });
 
+// Edição manual de um caso — sempre registrada no histórico (Seção 3.5 e 4)
+app.get('/api/casos/:id', async (req, res) => {
+  try {
+    const [linhas] = await pool.query('SELECT * FROM casos WHERE id = ?', [req.params.id]);
+    if (linhas.length === 0) return res.status(404).json({ erro: 'Caso não encontrado.' });
+    const caso = linhas[0];
+
+    // Recalcula a analise "em tempo real" so para exibicao (nao grava nada) — permite mostrar
+    // o "porque" de cada etapa do motor de regras na pagina de detalhe do caso.
+    const elegibilidade = verificarElegibilidade(caso);
+    const carencia = calcularCarencia(caso);
+    const franquiaData = calcularFranquia(caso);
+
+    res.json({ ...caso, analise: { elegibilidade, carencia, franquiaData } });
+  } catch (erro) {
+    console.error(erro);
+    res.status(500).json({ erro: 'Falha ao buscar o caso: ' + erro.message });
+  }
+});
+
 app.put('/api/casos/:id', async (req, res) => {
   try {
     const casoId = req.params.id;
@@ -434,10 +478,37 @@ app.get('/api/dashboard', async (req, res) => {
     const [porParceiro] = await pool.query(
       'SELECT parceiro, COUNT(*) AS quantidade FROM casos WHERE parceiro IS NOT NULL GROUP BY parceiro'
     );
+    const [valorPorParceiro] = await pool.query(
+      `SELECT parceiro, COALESCE(SUM(valor_a_pagar), 0) AS total
+       FROM casos WHERE parceiro IS NOT NULL AND valor_a_pagar IS NOT NULL
+       GROUP BY parceiro`
+    );
+    const [porMes] = await pool.query(
+      `SELECT DATE_FORMAT(data_upload, '%Y-%m') AS mes, COUNT(*) AS quantidade
+       FROM casos GROUP BY mes ORDER BY mes ASC`
+    );
     const [totalAPagarLinhas] = await pool.query(
       "SELECT COALESCE(SUM(valor_a_pagar), 0) AS total FROM casos WHERE status = 'PRONTO PARA PAGAR'"
     );
-    res.json({ porStatus, porParceiro, totalAPagar: totalAPagarLinhas[0].total });
+
+    // Contagens específicas para os cartões do dashboard (Seção 6 — legenda de status)
+    const contarPorStatus = (...statusList) =>
+      porStatus.filter(item => statusList.includes(item.status)).reduce((soma, item) => soma + item.quantidade, 0);
+
+    const totalCasos = porStatus.reduce((soma, item) => soma + item.quantidade, 0);
+
+    res.json({
+      porStatus,
+      porParceiro,
+      valorPorParceiro,
+      porMes,
+      totalAPagar: totalAPagarLinhas[0].total,
+      totalCasos,
+      emAnalise: contarPorStatus('EM CARÊNCIA / ANÁLISE'),
+      pendentes: contarPorStatus('AGUARDANDO DOC', 'AGUARDANDO OCR MANUAL'),
+      pagos: contarPorStatus('PAGO'),
+      cancelados: contarPorStatus('CANCELADO')
+    });
   } catch (erro) {
     console.error(erro);
     res.status(500).json({ erro: 'Falha ao buscar o dashboard: ' + erro.message });

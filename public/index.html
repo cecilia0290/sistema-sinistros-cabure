@@ -2,162 +2,348 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Todos os Casos — Sistema de Sinistros</title>
-  <style>
-    body { font-family: Arial, sans-serif; max-width: 1100px; margin: 40px auto; padding: 0 20px; }
-    h1 { color: #1a1a2e; }
-    nav { margin-bottom: 25px; padding: 12px; background: #f2f2f2; border-radius: 8px; }
-    nav a { margin-right: 18px; color: #1a1a2e; font-weight: bold; text-decoration: none; }
-    nav a:hover { text-decoration: underline; }
-    #upload-box { border: 2px dashed #ccc; padding: 20px; border-radius: 8px; margin-bottom: 20px; }
-    #filtros { margin-bottom: 20px; }
-    #filtros select, #filtros button { padding: 6px 10px; margin-right: 10px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 13px; }
-    th { background: #1a1a2e; color: white; }
-    #mensagem { margin-top: 10px; font-weight: bold; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Todos os Casos — Caburé Sinistros</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;650&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/estilo.css">
 </head>
 <body>
-  <nav>
-    <a href="/index.html">Todos os Casos</a>
-    <a href="/dashboard.html">Dashboard</a>
-    <a href="/pagar-agora.html">Pagar Agora</a>
-    <a href="/exportar">Exportar Excel</a>
-    <a href="#" id="link-sair" style="float:right;">Sair</a>
-  </nav>
+  <div class="app-layout">
+    <div id="sidebar" class="sidebar"></div>
 
-  <h1>Todos os Casos</h1>
+    <div class="main-content">
+      <div class="page">
+        <div class="page-header">
+          <div>
+            <span class="eyebrow">Operação</span>
+            <h1 class="page-title">Todos os casos</h1>
+            <p class="page-desc">Envie documentos de sinistro e acompanhe os casos processados automaticamente pelo motor de regras.</p>
+          </div>
+        </div>
 
-  <div id="upload-box">
-    <h3>Enviar documento (PDF, DOCX, ZIP, JPG ou PNG)</h3>
-    <input type="file" id="arquivo" accept=".pdf,.docx,.zip,.jpg,.jpeg,.png">
-    <button id="btn-enviar">Enviar</button>
-    <div id="mensagem"></div>
+        <div class="card">
+          <h3>Enviar documento</h3>
+          <div class="upload-row">
+            <input type="file" id="arquivo" accept=".pdf,.docx,.zip,.jpg,.jpeg,.png">
+            <button id="btn-enviar" class="btn btn-primary">Enviar</button>
+          </div>
+          <div id="mensagem" class="mensagem-status"></div>
+        </div>
+
+        <div class="filtros-row">
+          <label>Status
+            <select id="filtro-status">
+              <option value="">Todos</option>
+              <option value="NOVO">NOVO</option>
+              <option value="PRONTO PARA PAGAR">PRONTO PARA PAGAR</option>
+              <option value="EM FRANQUIA">EM FRANQUIA</option>
+              <option value="AGUARDANDO DOC">AGUARDANDO DOC</option>
+              <option value="EM CARÊNCIA / ANÁLISE">EM CARÊNCIA / ANÁLISE</option>
+              <option value="NEGADO">NEGADO</option>
+              <option value="AGUARDANDO OCR MANUAL">AGUARDANDO OCR MANUAL</option>
+              <option value="PAGO">PAGO</option>
+              <option value="CANCELADO">CANCELADO</option>
+            </select>
+          </label>
+          <label>Parceiro
+            <select id="filtro-parceiro"><option value="">Todos</option></select>
+          </label>
+        </div>
+
+        <div class="table-toolbar">
+          <div class="search-box">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+            <input type="text" id="busca" placeholder="Buscar por nome, CPF, ID, parceiro...">
+          </div>
+          <div class="columns-wrap">
+            <button id="btn-colunas" class="btn btn-secondary">Colunas</button>
+            <div id="painel-colunas" class="columns-panel">
+              <div class="columns-titulo">Mostrar colunas</div>
+              <div id="lista-colunas"></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="chips-row" class="chips-row"></div>
+        <div class="resultado-contagem" id="contagem-casos">Carregando casos...</div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr id="cabecalho-tabela"></tr></thead>
+            <tbody id="tabela-casos"></tbody>
+          </table>
+          <div class="pagination">
+            <span id="paginacao-info"></span>
+            <div class="pagination-btns">
+              <button id="btn-pagina-anterior">‹ Anterior</button>
+              <button id="btn-pagina-proxima">Próxima ›</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
-
-  <div id="filtros">
-    <label>Status:
-      <select id="filtro-status">
-        <option value="">Todos</option>
-        <option value="NOVO">NOVO</option>
-        <option value="PRONTO PARA PAGAR">PRONTO PARA PAGAR</option>
-        <option value="EM FRANQUIA">EM FRANQUIA</option>
-        <option value="AGUARDANDO DOC">AGUARDANDO DOC</option>
-        <option value="EM CARÊNCIA / ANÁLISE">EM CARÊNCIA / ANÁLISE</option>
-        <option value="NEGADO">NEGADO</option>
-        <option value="AGUARDANDO OCR MANUAL">AGUARDANDO OCR MANUAL</option>
-      </select>
-    </label>
-    <label>Parceiro:
-      <select id="filtro-parceiro">
-        <option value="">Todos</option>
-      </select>
-    </label>
-    <button id="btn-filtrar">Filtrar</button>
-    <button id="btn-limpar">Limpar filtros</button>
-  </div>
-
-  <table>
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Segurado</th>
-        <th>CPF/CCB</th>
-        <th>Parceiro</th>
-        <th>Cobertura</th>
-        <th>Data evento</th>
-        <th>Valor parcela</th>
-        <th>Teto/parcela (seguro)</th>
-        <th>Parcelas cobertas</th>
-        <th>Carência (dias)</th>
-        <th>Franquia até</th>
-        <th>CIA</th>
-        <th>Valor a pagar</th>
-        <th>Status</th>
-      </tr>
-    </thead>
-    <tbody id="tabela-casos"></tbody>
-  </table>
 
   <script>
-    function linhaHtml(caso) {
-      return `
-        <tr>
-          <td>${caso.id}</td>
-          <td>${caso.segurado || caso.nome_arquivo}</td>
-          <td>${caso.cpf_ccb || '-'}</td>
-          <td>${caso.parceiro || '-'}</td>
-          <td>${caso.cobertura || '-'}</td>
-          <td>${caso.data_evento ? new Date(caso.data_evento).toLocaleDateString('pt-BR') : '-'}</td>
-          <td>${caso.valor_parcela ? 'R$ ' + Number(caso.valor_parcela).toFixed(2) : '-'}</td>
-          <td>${caso.teto_parcela_produto ? 'R$ ' + Number(caso.teto_parcela_produto).toFixed(2) : '-'}</td>
-          <td>${caso.numero_parcelas_cobertas_produto ?? '-'}</td>
-          <td>${caso.carencia_dias ?? '-'}</td>
-          <td>${caso.franquia_data ? new Date(caso.franquia_data).toLocaleDateString('pt-BR') : '-'}</td>
-          <td>${caso.cia || '-'}</td>
-          <td>${caso.valor_a_pagar !== null ? 'R$ ' + Number(caso.valor_a_pagar).toFixed(2) : '-'}</td>
-          <td><b>${caso.status}</b>${caso.motivo_negacao ? ' <br><small>' + caso.motivo_negacao + '</small>' : ''}</td>
-        </tr>
-      `;
+    // --- Definição das colunas disponíveis (Seção 3 da especificação) ---
+    const COLUNAS = [
+      { chave: 'id', rotulo: 'ID', tipo: 'numero', fixa: true },
+      { chave: 'segurado', rotulo: 'Segurado', tipo: 'texto' },
+      { chave: 'cpf_ccb', rotulo: 'CPF/CCB', tipo: 'texto', mono: true },
+      { chave: 'parceiro', rotulo: 'Parceiro', tipo: 'texto' },
+      { chave: 'cobertura', rotulo: 'Cobertura', tipo: 'texto' },
+      { chave: 'data_evento', rotulo: 'Data evento', tipo: 'data' },
+      { chave: 'valor_parcela', rotulo: 'Valor parcela', tipo: 'moeda' },
+      { chave: 'teto_parcela_produto', rotulo: 'Teto (seguro)', tipo: 'moeda' },
+      { chave: 'numero_parcelas_cobertas_produto', rotulo: 'Parcelas cobertas', tipo: 'numero' },
+      { chave: 'carencia_dias', rotulo: 'Carência', tipo: 'numero' },
+      { chave: 'franquia_data', rotulo: 'Franquia até', tipo: 'data' },
+      { chave: 'cia', rotulo: 'CIA', tipo: 'texto' },
+      { chave: 'valor_a_pagar', rotulo: 'Valor a pagar', tipo: 'moeda' },
+      { chave: 'status', rotulo: 'Status', tipo: 'status', fixa: true }
+    ];
+    const COLUNAS_PADRAO_VISIVEIS = ['id', 'segurado', 'cpf_ccb', 'parceiro', 'cobertura', 'data_evento', 'valor_a_pagar', 'status'];
+    const CHAVE_COLUNAS_LOCALSTORAGE = 'cabure-colunas-visiveis';
+    const TAMANHO_PAGINA = 25;
+
+    let casosTodos = [];
+    let colunasVisiveis = carregarColunasVisiveis();
+    let ordenacao = { coluna: null, direcao: 'asc' };
+    let paginaAtual = 1;
+
+    function carregarColunasVisiveis() {
+      try {
+        const salvo = localStorage.getItem(CHAVE_COLUNAS_LOCALSTORAGE);
+        if (salvo) return JSON.parse(salvo);
+      } catch (e) { /* localStorage indisponível — usa padrão */ }
+      return COLUNAS_PADRAO_VISIVEIS;
+    }
+    function salvarColunasVisiveis() {
+      try { localStorage.setItem(CHAVE_COLUNAS_LOCALSTORAGE, JSON.stringify(colunasVisiveis)); } catch (e) {}
+    }
+
+    function classeBadge(status) {
+      const mapa = {
+        'PRONTO PARA PAGAR': 'badge-sucesso', 'PAGO': 'badge-sucesso',
+        'EM FRANQUIA': 'badge-alerta', 'AGUARDANDO DOC': 'badge-alerta', 'AGUARDANDO OCR MANUAL': 'badge-alerta',
+        'EM CARÊNCIA / ANÁLISE': 'badge-info',
+        'NOVO': 'badge-neutro',
+        'NEGADO': 'badge-perigo', 'CANCELADO': 'badge-perigo'
+      };
+      return mapa[status] || 'badge-neutro';
+    }
+
+    function formatarValor(caso, coluna) {
+      const valor = caso[coluna.chave];
+      if (coluna.chave === 'status') {
+        return `<span class="badge ${classeBadge(valor)}">${valor}</span>${caso.motivo_negacao ? '<span class="motivo-negacao">' + caso.motivo_negacao + '</span>' : ''}`;
+      }
+      if (coluna.chave === 'segurado') return valor || caso.nome_arquivo;
+      if (valor === null || valor === undefined || valor === '') return '<span style="color:var(--text-faint)">—</span>';
+      if (coluna.tipo === 'moeda') return 'R$ ' + Number(valor).toFixed(2);
+      if (coluna.tipo === 'data') return new Date(valor).toLocaleDateString('pt-BR');
+      return valor;
+    }
+
+    // --- Montagem do cabeçalho (com ordenação por clique) ---
+    function montarCabecalho() {
+      const colunas = COLUNAS.filter(c => colunasVisiveis.includes(c.chave) || c.fixa);
+      document.getElementById('cabecalho-tabela').innerHTML = colunas.map(c => {
+        const ativo = ordenacao.coluna === c.chave;
+        const seta = ativo ? (ordenacao.direcao === 'asc' ? '▲' : '▼') : '▲';
+        return `<th class="th-sortable" data-coluna="${c.chave}">${c.rotulo}<span class="sort-arrow ${ativo ? 'ativo' : ''}">${seta}</span></th>`;
+      }).join('');
+
+      document.querySelectorAll('.th-sortable').forEach(th => {
+        th.addEventListener('click', () => {
+          const chave = th.dataset.coluna;
+          if (ordenacao.coluna === chave) {
+            ordenacao.direcao = ordenacao.direcao === 'asc' ? 'desc' : 'asc';
+          } else {
+            ordenacao = { coluna: chave, direcao: 'asc' };
+          }
+          paginaAtual = 1;
+          renderizar();
+        });
+      });
+    }
+
+    // --- Painel de seleção de colunas ---
+    function montarPainelColunas() {
+      document.getElementById('lista-colunas').innerHTML = COLUNAS.filter(c => !c.fixa).map(c => `
+        <label>
+          <input type="checkbox" data-coluna="${c.chave}" ${colunasVisiveis.includes(c.chave) ? 'checked' : ''}>
+          ${c.rotulo}
+        </label>
+      `).join('');
+
+      document.querySelectorAll('#lista-colunas input[type="checkbox"]').forEach(input => {
+        input.addEventListener('change', () => {
+          const chave = input.dataset.coluna;
+          if (input.checked) {
+            if (!colunasVisiveis.includes(chave)) colunasVisiveis.push(chave);
+          } else {
+            colunasVisiveis = colunasVisiveis.filter(c => c !== chave);
+          }
+          salvarColunasVisiveis();
+          renderizar();
+        });
+      });
+    }
+
+    document.getElementById('btn-colunas').addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.getElementById('painel-colunas').classList.toggle('aberto');
+    });
+    document.addEventListener('click', (e) => {
+      const painel = document.getElementById('painel-colunas');
+      if (!painel.contains(e.target) && e.target.id !== 'btn-colunas') painel.classList.remove('aberto');
+    });
+
+    // --- Filtros, busca, ordenação, paginação (tudo client-side, sobre os casos já carregados) ---
+    function aplicarFiltrosEBusca() {
+      const status = document.getElementById('filtro-status').value;
+      const parceiro = document.getElementById('filtro-parceiro').value;
+      const busca = document.getElementById('busca').value.trim().toLowerCase();
+
+      return casosTodos.filter(caso => {
+        if (status && caso.status !== status) return false;
+        if (parceiro && caso.parceiro !== parceiro) return false;
+        if (busca) {
+          const alvo = [caso.id, caso.segurado, caso.cpf_ccb, caso.parceiro, caso.cobertura, caso.cia, caso.nome_arquivo]
+            .filter(Boolean).join(' ').toLowerCase();
+          if (!alvo.includes(busca)) return false;
+        }
+        return true;
+      });
+    }
+
+    function ordenarLista(lista) {
+      if (!ordenacao.coluna) return lista;
+      const coluna = COLUNAS.find(c => c.chave === ordenacao.coluna);
+      const fator = ordenacao.direcao === 'asc' ? 1 : -1;
+
+      return [...lista].sort((a, b) => {
+        let va = a[ordenacao.coluna];
+        let vb = b[ordenacao.coluna];
+        if (va === null || va === undefined) return 1;
+        if (vb === null || vb === undefined) return -1;
+        if (coluna.tipo === 'moeda' || coluna.tipo === 'numero') return (Number(va) - Number(vb)) * fator;
+        if (coluna.tipo === 'data') return (new Date(va) - new Date(vb)) * fator;
+        return String(va).localeCompare(String(vb), 'pt-BR') * fator;
+      });
+    }
+
+    function montarChips() {
+      const status = document.getElementById('filtro-status').value;
+      const parceiro = document.getElementById('filtro-parceiro').value;
+      const busca = document.getElementById('busca').value.trim();
+      const chips = [];
+
+      if (status) chips.push({ rotulo: 'Status: ' + status, aoRemover: () => { document.getElementById('filtro-status').value = ''; } });
+      if (parceiro) chips.push({ rotulo: 'Parceiro: ' + parceiro, aoRemover: () => { document.getElementById('filtro-parceiro').value = ''; } });
+      if (busca) chips.push({ rotulo: 'Busca: "' + busca + '"', aoRemover: () => { document.getElementById('busca').value = ''; } });
+
+      const container = document.getElementById('chips-row');
+      container.innerHTML = chips.map((chip, i) => `<span class="chip">${chip.rotulo}<button data-i="${i}">×</button></span>`).join('');
+      container.querySelectorAll('button').forEach(btn => {
+        btn.addEventListener('click', () => { chips[Number(btn.dataset.i)].aoRemover(); paginaAtual = 1; renderizar(); });
+      });
+    }
+
+    function montarSelectParceiros() {
+      const selectParceiro = document.getElementById('filtro-parceiro');
+      const selecionado = selectParceiro.value;
+      const unicos = [...new Set(casosTodos.map(c => c.parceiro).filter(Boolean))].sort();
+      selectParceiro.innerHTML = '<option value="">Todos</option>' + unicos.map(p => `<option value="${p}">${p}</option>`).join('');
+      selectParceiro.value = selecionado;
+    }
+
+    function renderizar() {
+      montarCabecalho();
+      montarChips();
+
+      const filtrados = ordenarLista(aplicarFiltrosEBusca());
+      document.getElementById('contagem-casos').textContent =
+        filtrados.length === 1 ? '1 segurado encontrado' : `${filtrados.length} segurados encontrados`;
+
+      const totalPaginas = Math.max(1, Math.ceil(filtrados.length / TAMANHO_PAGINA));
+      if (paginaAtual > totalPaginas) paginaAtual = totalPaginas;
+      const inicio = (paginaAtual - 1) * TAMANHO_PAGINA;
+      const paginaDeCasos = filtrados.slice(inicio, inicio + TAMANHO_PAGINA);
+
+      const colunas = COLUNAS.filter(c => colunasVisiveis.includes(c.chave) || c.fixa);
+      document.getElementById('tabela-casos').innerHTML = paginaDeCasos.map(caso => `
+        <tr class="linha-clicavel" data-id="${caso.id}">${colunas.map(c => {
+          const classeExtra = c.mono ? 'col-mono' : (c.tipo === 'moeda' ? 'col-valor col-mono' : (c.tipo === 'data' ? 'col-mono' : ''));
+          return `<td class="${classeExtra}">${formatarValor(caso, c)}</td>`;
+        }).join('')}</tr>
+      `).join('') || `<tr><td colspan="${colunas.length}" class="vazio">Nenhum caso encontrado com esses filtros.</td></tr>`;
+
+      document.querySelectorAll('.linha-clicavel').forEach(linha => {
+        linha.addEventListener('click', () => { window.location.href = '/caso.html?id=' + linha.dataset.id; });
+      });
+
+      document.getElementById('paginacao-info').textContent =
+        filtrados.length === 0 ? 'Nenhum resultado' : `Página ${paginaAtual} de ${totalPaginas} — mostrando ${paginaDeCasos.length} de ${filtrados.length}`;
+      document.getElementById('btn-pagina-anterior').disabled = paginaAtual <= 1;
+      document.getElementById('btn-pagina-proxima').disabled = paginaAtual >= totalPaginas;
     }
 
     async function carregarCasos() {
-      const status = document.getElementById('filtro-status').value;
-      const parceiro = document.getElementById('filtro-parceiro').value;
-      const parametros = new URLSearchParams();
-      if (status) parametros.set('status', status);
-      if (parceiro) parametros.set('parceiro', parceiro);
-
-      const resposta = await fetch('/casos?' + parametros.toString());
-      const casos = await resposta.json();
-      document.getElementById('tabela-casos').innerHTML = casos.map(linhaHtml).join('');
-
-      // Preenche o dropdown de parceiros dinamicamente, sem duplicar nomes
-      const selectParceiro = document.getElementById('filtro-parceiro');
-      const parceiroSelecionado = selectParceiro.value;
-      const parceirosUnicos = [...new Set(casos.map(c => c.parceiro).filter(Boolean))];
-      selectParceiro.innerHTML = '<option value="">Todos</option>' +
-        parceirosUnicos.map(p => `<option value="${p}">${p}</option>`).join('');
-      selectParceiro.value = parceiroSelecionado;
+      const resposta = await fetch('/casos');
+      casosTodos = await resposta.json();
+      montarSelectParceiros();
+      montarPainelColunas();
+      renderizar();
     }
 
-    document.getElementById('btn-filtrar').addEventListener('click', carregarCasos);
-    document.getElementById('btn-limpar').addEventListener('click', () => {
-      document.getElementById('filtro-status').value = '';
-      document.getElementById('filtro-parceiro').value = '';
-      carregarCasos();
-    });
+    // Lê ?status=... da URL (usado pelos links do menu lateral: Em análise, Pendentes, Pagos etc.)
+    const parametrosUrl = new URLSearchParams(window.location.search);
+    if (parametrosUrl.get('status')) {
+      document.getElementById('filtro-status').value = parametrosUrl.get('status');
+    }
+
+    document.getElementById('filtro-status').addEventListener('change', () => { paginaAtual = 1; renderizar(); });
+    document.getElementById('filtro-parceiro').addEventListener('change', () => { paginaAtual = 1; renderizar(); });
+    document.getElementById('busca').addEventListener('input', () => { paginaAtual = 1; renderizar(); });
+    document.getElementById('btn-pagina-anterior').addEventListener('click', () => { paginaAtual--; renderizar(); });
+    document.getElementById('btn-pagina-proxima').addEventListener('click', () => { paginaAtual++; renderizar(); });
 
     document.getElementById('btn-enviar').addEventListener('click', async () => {
       const input = document.getElementById('arquivo');
       const mensagem = document.getElementById('mensagem');
       if (!input.files[0]) {
         mensagem.textContent = 'Escolha um arquivo primeiro.';
+        mensagem.className = 'mensagem-status mensagem-erro';
         return;
       }
       const formData = new FormData();
       formData.append('documento', input.files[0]);
 
-      mensagem.textContent = 'Enviando...';
+      mensagem.textContent = 'Enviando e processando — isso pode levar de alguns segundos a poucos minutos, dependendo da quantidade de documentos...';
+      mensagem.className = 'mensagem-status';
+      document.getElementById('btn-enviar').disabled = true;
+
       const resposta = await fetch('/upload', { method: 'POST', body: formData });
       const resultado = await resposta.json();
+      document.getElementById('btn-enviar').disabled = false;
 
       if (resposta.ok) {
         mensagem.textContent = resultado.mensagem + (resultado.id ? ' ID: ' + resultado.id : '');
+        mensagem.className = 'mensagem-status mensagem-ok';
         input.value = '';
         carregarCasos();
       } else {
         mensagem.textContent = 'Erro: ' + resultado.erro;
+        mensagem.className = 'mensagem-status mensagem-erro';
       }
     });
 
     carregarCasos();
-      document.getElementById('link-sair').addEventListener('click', async (evento) => {
-         evento.preventDefault();
-         await fetch('/logout', { method: 'POST' });
-         window.location.href = '/login.html';
-       });
   </script>
+  <script src="/layout.js"></script>
 </body>
 </html>

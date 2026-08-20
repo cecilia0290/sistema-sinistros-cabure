@@ -2,44 +2,54 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Pagar Agora — Sistema de Sinistros</title>
-  <style>
-    body { font-family: Arial, sans-serif; max-width: 1100px; margin: 40px auto; padding: 0 20px; }
-    h1 { color: #1a1a2e; }
-    nav { margin-bottom: 25px; padding: 12px; background: #f2f2f2; border-radius: 8px; }
-    nav a { margin-right: 18px; color: #1a1a2e; font-weight: bold; text-decoration: none; }
-    nav a:hover { text-decoration: underline; }
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 13px; }
-    th { background: #1a1a2e; color: white; }
-    .vazio { padding: 20px; text-align: center; color: #777; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pagar Agora — Caburé Sinistros</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;650&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/estilo.css">
 </head>
 <body>
-  <nav>
-    <a href="/index.html">Todos os Casos</a>
-    <a href="/dashboard.html">Dashboard</a>
-    <a href="/pagar-agora.html">Pagar Agora</a>
-    <a href="/exportar">Exportar Excel</a>
-  </nav>
+  <div class="app-layout">
+    <div id="sidebar" class="sidebar"></div>
 
-  <h1>Pagar Agora</h1>
-  <p>Casos elegíveis, com carência e franquia já cumpridas — prontos para pagamento imediato (Seção 4 da especificação).</p>
+    <div class="main-content">
+      <div class="page">
+        <div class="page-header">
+          <div>
+            <span class="eyebrow">Ação</span>
+            <h1 class="page-title">Pagar agora</h1>
+            <p class="page-desc">Casos elegíveis, com carência e franquia já cumpridas — prontos para pagamento imediato.</p>
+          </div>
+        </div>
 
-  <table>
-    <thead>
-      <tr>
-        <th>ID</th>
-        <th>Segurado</th>
-        <th>CPF/CCB</th>
-        <th>Parceiro</th>
-        <th>CIA</th>
-        <th>Valor a pagar</th>
-      </tr>
-    </thead>
-    <tbody id="tabela-pagar"></tbody>
-  </table>
-  <div id="mensagem-vazia" class="vazio" style="display:none;">Nenhum caso pronto para pagamento no momento.</div>
+        <div class="stat-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 18px;">
+          <div class="stat-card destaque">
+            <div class="stat-top"><span class="stat-label">Total a pagar agora</span>
+              <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v20M17 6.5c0-2-2.2-3-5-3s-5 1.2-5 3 2.2 2.7 5 3 5 1 5 3-2.2 3-5 3-5-1-5-3"/></svg></div>
+            </div>
+            <div class="stat-value" id="stat-total-pagar">R$ 0,00</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-top"><span class="stat-label">Segurados prontos</span>
+              <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.3 2.3L16 9.5"/></svg></div>
+            </div>
+            <div class="stat-value" id="stat-total-segurados">0</div>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Segurado</th><th>CPF/CCB</th><th>Parceiro</th><th>CIA</th><th>Valor a pagar</th></tr>
+            </thead>
+            <tbody id="tabela-pagar"></tbody>
+          </table>
+          <div id="mensagem-vazia" class="vazio" style="display:none;">Nenhum caso pronto para pagamento no momento.</div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script>
     async function carregarPagarAgora() {
@@ -50,22 +60,22 @@
         <tr>
           <td>${caso.id}</td>
           <td>${caso.segurado || caso.nome_arquivo}</td>
-          <td>${caso.cpf_ccb || '-'}</td>
+          <td class="col-mono">${caso.cpf_ccb || '-'}</td>
           <td>${caso.parceiro || '-'}</td>
           <td>${caso.cia || '-'}</td>
-          <td>${caso.valor_a_pagar !== null ? 'R$ ' + Number(caso.valor_a_pagar).toFixed(2) : '-'}</td>
+          <td class="col-valor col-mono">${caso.valor_a_pagar !== null ? 'R$ ' + Number(caso.valor_a_pagar).toFixed(2) : '-'}</td>
         </tr>
       `).join('');
 
       document.getElementById('mensagem-vazia').style.display = casos.length === 0 ? 'block' : 'none';
+
+      const somaTotal = casos.reduce((soma, caso) => soma + (caso.valor_a_pagar !== null ? Number(caso.valor_a_pagar) : 0), 0);
+      document.getElementById('stat-total-pagar').textContent = 'R$ ' + somaTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+      document.getElementById('stat-total-segurados').textContent = casos.length;
     }
 
     carregarPagarAgora();
-         document.getElementById('link-sair').addEventListener('click', async (evento) => {
-         evento.preventDefault();
-         await fetch('/logout', { method: 'POST' });
-         window.location.href = '/login.html';
-       });
   </script>
+  <script src="/layout.js"></script>
 </body>
 </html>

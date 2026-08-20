@@ -2,80 +2,189 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <title>Dashboard — Sistema de Sinistros</title>
-  <style>
-    body { font-family: Arial, sans-serif; max-width: 1100px; margin: 40px auto; padding: 0 20px; }
-    h1 { color: #1a1a2e; }
-    nav { margin-bottom: 25px; padding: 12px; background: #f2f2f2; border-radius: 8px; }
-    nav a { margin-right: 18px; color: #1a1a2e; font-weight: bold; text-decoration: none; }
-    nav a:hover { text-decoration: underline; }
-    .cartoes { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 30px; }
-    .cartao { background: #1a1a2e; color: white; padding: 20px; border-radius: 8px; min-width: 220px; }
-    .cartao .numero { font-size: 28px; font-weight: bold; margin-top: 6px; }
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-    th { background: #1a1a2e; color: white; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard — Caburé Sinistros</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;650&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/estilo.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 </head>
 <body>
-  <nav>
-    <a href="/index.html">Todos os Casos</a>
-    <a href="/dashboard.html">Dashboard</a>
-    <a href="/pagar-agora.html">Pagar Agora</a>
-    <a href="/exportar">Exportar Excel</a>
-  </nav>
+  <div class="app-layout">
+    <div id="sidebar" class="sidebar"></div>
 
-  <h1>Dashboard</h1>
+    <div class="main-content">
+      <div class="page">
+        <div class="page-header">
+          <div>
+            <span class="eyebrow">Visão geral</span>
+            <h1 class="page-title">Dashboard</h1>
+            <p class="page-desc">Central de controle operacional — panorama consolidado de todos os casos.</p>
+          </div>
+        </div>
 
-  <div class="cartoes">
-    <div class="cartao">
-      <div>Valor total pronto para pagar</div>
-      <div class="numero" id="cartao-total-pagar">R$ 0,00</div>
-    </div>
-    <div class="cartao">
-      <div>Total de casos</div>
-      <div class="numero" id="cartao-total-casos">0</div>
+        <div class="stat-grid">
+          <div class="stat-card destaque">
+            <div class="stat-top"><span class="stat-label">A pagar</span>
+              <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v20M17 6.5c0-2-2.2-3-5-3s-5 1.2-5 3 2.2 2.7 5 3 5 1 5 3-2.2 3-5 3-5-1-5-3"/></svg></div>
+            </div>
+            <div class="stat-value" id="stat-a-pagar">R$ 0,00</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-top"><span class="stat-label">Total de casos</span>
+              <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h10"/></svg></div>
+            </div>
+            <div class="stat-value" id="stat-total">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-top"><span class="stat-label">Em análise</span>
+              <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></div>
+            </div>
+            <div class="stat-value" id="stat-analise">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-top"><span class="stat-label">Pendentes</span>
+              <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg></div>
+            </div>
+            <div class="stat-value" id="stat-pendentes">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-top"><span class="stat-label">Pagos</span>
+              <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.3 2.3L16 9.5"/></svg></div>
+            </div>
+            <div class="stat-value" id="stat-pagos">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-top"><span class="stat-label">Cancelados</span>
+              <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg></div>
+            </div>
+            <div class="stat-value" id="stat-cancelados">0</div>
+          </div>
+        </div>
+
+        <div class="chart-grid">
+          <div class="chart-card">
+            <h3>Casos recebidos por mês</h3>
+            <span class="chart-sub">Volume de novos casos ao longo do tempo</span>
+            <div class="chart-canvas-wrap"><canvas id="grafico-por-mes"></canvas></div>
+          </div>
+          <div class="chart-card">
+            <h3>Distribuição por status</h3>
+            <span class="chart-sub">Situação atual de todos os casos</span>
+            <div class="chart-canvas-wrap"><canvas id="grafico-status"></canvas></div>
+          </div>
+        </div>
+
+        <div class="chart-grid-2">
+          <div class="chart-card">
+            <h3>Casos por parceiro</h3>
+            <span class="chart-sub">Quantidade de casos, por parceiro financeiro</span>
+            <div class="chart-canvas-wrap"><canvas id="grafico-casos-parceiro"></canvas></div>
+          </div>
+          <div class="chart-card">
+            <h3>Valor a pagar por parceiro</h3>
+            <span class="chart-sub">Soma dos valores calculados, por parceiro</span>
+            <div class="chart-canvas-wrap"><canvas id="grafico-valor-parceiro"></canvas></div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
-  <h3>Casos por status</h3>
-  <table>
-    <thead><tr><th>Status</th><th>Quantidade</th></tr></thead>
-    <tbody id="tabela-status"></tbody>
-  </table>
-
-  <h3 style="margin-top:30px;">Casos por parceiro</h3>
-  <table>
-    <thead><tr><th>Parceiro</th><th>Quantidade</th></tr></thead>
-    <tbody id="tabela-parceiro"></tbody>
-  </table>
-
   <script>
+    const CORES = ['#C9932E', '#2E3E8F', '#2FA35B', '#D6404F', '#8A93A3', '#D89A2B', '#4C5FC9', '#1C7A40'];
+
+    function graficoOuVazio(idCanvas, temDados, montarGrafico) {
+      const canvas = document.getElementById(idCanvas);
+      if (!temDados) {
+        canvas.replaceWith(Object.assign(document.createElement('div'), { className: 'chart-empty', textContent: 'Ainda não há dados suficientes para este gráfico.' }));
+        return;
+      }
+      montarGrafico(canvas);
+    }
+
     async function carregarDashboard() {
       const resposta = await fetch('/api/dashboard');
       const dados = await resposta.json();
 
-      document.getElementById('cartao-total-pagar').textContent =
-        'R$ ' + Number(dados.totalAPagar).toFixed(2);
+      document.getElementById('stat-a-pagar').textContent = 'R$ ' + Number(dados.totalAPagar).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
+      document.getElementById('stat-total').textContent = dados.totalCasos;
+      document.getElementById('stat-analise').textContent = dados.emAnalise;
+      document.getElementById('stat-pendentes').textContent = dados.pendentes;
+      document.getElementById('stat-pagos').textContent = dados.pagos;
+      document.getElementById('stat-cancelados').textContent = dados.cancelados;
 
-      const totalCasos = dados.porStatus.reduce((soma, item) => soma + item.quantidade, 0);
-      document.getElementById('cartao-total-casos').textContent = totalCasos;
+      Chart.defaults.font.family = "'Inter', sans-serif";
+      Chart.defaults.font.size = 11.5;
+      Chart.defaults.color = '#6B7280';
 
-      document.getElementById('tabela-status').innerHTML = dados.porStatus
-        .map(item => `<tr><td>${item.status}</td><td>${item.quantidade}</td></tr>`)
-        .join('');
+      graficoOuVazio('grafico-por-mes', dados.porMes.length > 0, (canvas) => {
+        new Chart(canvas, {
+          type: 'line',
+          data: {
+            labels: dados.porMes.map(item => item.mes),
+            datasets: [{
+              data: dados.porMes.map(item => item.quantidade),
+              borderColor: '#C9932E', backgroundColor: 'rgba(201,147,46,0.12)',
+              fill: true, tension: 0.35, pointRadius: 3, pointBackgroundColor: '#C9932E'
+            }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: '#EFF1F5' } }, x: { grid: { display: false } } }
+          }
+        });
+      });
 
-      document.getElementById('tabela-parceiro').innerHTML = dados.porParceiro
-        .map(item => `<tr><td>${item.parceiro}</td><td>${item.quantidade}</td></tr>`)
-        .join('');
+      graficoOuVazio('grafico-status', dados.porStatus.length > 0, (canvas) => {
+        new Chart(canvas, {
+          type: 'doughnut',
+          data: {
+            labels: dados.porStatus.map(item => item.status),
+            datasets: [{ data: dados.porStatus.map(item => item.quantidade), backgroundColor: CORES, borderWidth: 0 }]
+          },
+          options: {
+            responsive: true, maintainAspectRatio: false, cutout: '65%',
+            plugins: { legend: { position: 'right', labels: { boxWidth: 8, boxHeight: 8, padding: 10, font: { size: 10.5 } } } }
+          }
+        });
+      });
+
+      graficoOuVazio('grafico-casos-parceiro', dados.porParceiro.length > 0, (canvas) => {
+        new Chart(canvas, {
+          type: 'bar',
+          data: {
+            labels: dados.porParceiro.map(item => item.parceiro),
+            datasets: [{ data: dados.porParceiro.map(item => item.quantidade), backgroundColor: '#26355F', borderRadius: 5, maxBarThickness: 26 }]
+          },
+          options: {
+            indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: { x: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: '#EFF1F5' } }, y: { grid: { display: false } } }
+          }
+        });
+      });
+
+      graficoOuVazio('grafico-valor-parceiro', dados.valorPorParceiro.length > 0, (canvas) => {
+        new Chart(canvas, {
+          type: 'bar',
+          data: {
+            labels: dados.valorPorParceiro.map(item => item.parceiro),
+            datasets: [{ data: dados.valorPorParceiro.map(item => Number(item.total)), backgroundColor: '#C9932E', borderRadius: 5, maxBarThickness: 26 }]
+          },
+          options: {
+            indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => 'R$ ' + ctx.parsed.x.toFixed(2) } } },
+            scales: { x: { beginAtZero: true, grid: { color: '#EFF1F5' }, ticks: { callback: (v) => 'R$ ' + v } }, y: { grid: { display: false } } }
+          }
+        });
+      });
     }
 
     carregarDashboard();
-           document.getElementById('link-sair').addEventListener('click', async (evento) => {
-         evento.preventDefault();
-         await fetch('/logout', { method: 'POST' });
-         window.location.href = '/login.html';
-       });
   </script>
+  <script src="/layout.js"></script>
 </body>
 </html>
