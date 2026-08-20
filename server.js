@@ -1,5 +1,7 @@
 require('dotenv').config();
 const express = require('express');
+const session = require('express-session');
+const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
@@ -17,6 +19,68 @@ const PORT = process.env.PORT || 3000;
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+app.use(express.json());
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'troque-este-segredo',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { maxAge: 8 * 60 * 60 * 1000 } // sessão dura 8 horas
+}));
+
+// --- Login / autenticação (Seção 10 e 8) ---
+
+function exigirLogin(req, res, next) {
+  const rotasLivres = ['/login.html', '/login', '/logout'];
+  if (req.session && req.session.usuario) return next();
+  if (rotasLivres.includes(req.path)) return next();
+
+  const ehChamadaDeApi = req.path.startsWith('/api/') || req.path === '/upload' ||
+    req.path === '/casos' || req.path === '/exportar';
+  if (ehChamadaDeApi) {
+    return res.status(401).json({ erro: 'Sessão expirada ou não autenticado. Faça login novamente.' });
+  }
+  return res.redirect('/login.html');
+}
+
+app.post('/login', async (req, res) => {
+  try {
+    const { usuario, senha } = req.body;
+    const [linhas] = await pool.query('SELECT * FROM usuarios WHERE usuario = ?', [usuario]);
+    if (linhas.length === 0) {
+      return res.status(401).json({ erro: 'Usuário ou senha inválidos.' });
+    }
+    const usuarioEncontrado = linhas[0];
+    const senhaCorreta = await bcrypt.compare(senha, usuarioEncontrado.senha_hash);
+    if (!senhaCorreta) {
+      return res.status(401).json({ erro: 'Usuário ou senha inválidos.' });
+    }
+    req.session.usuario = {
+      id: usuarioEncontrado.id,
+      nome: usuarioEncontrado.nome,
+      usuario: usuarioEncontrado.usuario,
+      perfil: usuarioEncontrado.perfil
+    };
+    res.json({ mensagem: 'Login realizado com sucesso.', usuario: req.session.usuario });
+  } catch (erro) {
+    console.error(erro);
+    res.status(500).json({ erro: 'Falha ao efetuar login: ' + erro.message });
+  }
+});
+
+app.post('/logout', (req, res) => {
+  req.session.destroy(() => {
+    res.json({ mensagem: 'Sessão encerrada.' });
+  });
+});
+
+app.get('/api/me', (req, res) => {
+  if (req.session && req.session.usuario) {
+    return res.json(req.session.usuario);
+  }
+  res.status(401).json({ erro: 'Não autenticado.' });
+});
+
+app.use(exigirLogin);
 app.use(express.static('public'));
 
 const storage = multer.diskStorage({
@@ -60,7 +124,6 @@ async function extrairTextoDeArquivo(caminhoArquivo) {
 }
 
 // --- Extração estruturada por IA ---
-// A IA SÓ lê e organiza os dados. Ela NUNCA decide nada nem calcula nada.
 
 async function extrairCamposComIA(textoDocumento) {
   const prompt = `Você vai ler o texto de um documento de sinistro de seguro (perda de renda / seguro prestamista).
@@ -127,9 +190,19 @@ async function buscarCasoPorCpfCcb(cpfCcbNormalizado) {
   return linhas.length > 0 ? linhas[0].id : null;
 }
 
-// Processa UM documento ou UMA pasta de ZIP já com o texto extraído.
-// Decide se atualiza um caso já existente (mesmo CPF/CCB) ou cria um novo (Seção 7.3),
-// registra o documento na tabela "documentos" (Seção 8), e no final roda o motor de regras.
+// --- Histórico / auditoria (Seção 4 e 8) ---
+
+async function registrarHistorico(casoId, campo, valorAnterior, valorNovo, usuario) {
+  const antigoTexto = (valorAnterior === null || valorAnterior === undefined) ? null : String(valorAnterior);
+  const novoTexto = (valorNovo === null || valorNovo === undefined) ? null : String(valorNovo);
+  if (antigoTexto === novoTexto) return;
+
+  await pool.query(
+    'INSERT INTO historico (caso_id, campo, valor_anterior, valor_novo, usuario) VALUES (?, ?, ?, ?, ?)',
+    [casoId, campo, antigoTexto, novoTexto, usuario]
+  );
+}
+
 async function processarUnidadeDocumental(nomeReferencia, textoExtraido, precisaOcrManual) {
   let campos = null;
   if (textoExtraido && textoExtraido.trim().length >= 10) {
@@ -191,16 +264,20 @@ async function processarUnidadeDocumental(nomeReferencia, textoExtraido, precisa
     );
   }
 
-  await aplicarMotorDeRegras(casoId);
+  await aplicarMotorDeRegras(casoId, 'Sistema (IA + motor de regras)');
 
   return { casoId, eraNovo };
 }
 
-async function aplicarMotorDeRegras(casoId) {
+async function aplicarMotorDeRegras(casoId, usuario) {
   const [linhas] = await pool.query('SELECT * FROM casos WHERE id = ?', [casoId]);
   if (linhas.length === 0) return;
-  const caso = linhas[0];
-  const resultado = calcularCaso(caso);
+  const casoAntes = linhas[0];
+  const resultado = calcularCaso(casoAntes);
+
+  await registrarHistorico(casoId, 'status', casoAntes.status, resultado.status, usuario);
+  await registrarHistorico(casoId, 'valor_a_pagar', casoAntes.valor_a_pagar, resultado.valorAPagar, usuario);
+
   await pool.query(
     `UPDATE casos SET
       carencia_dias = ?, franquia_data = ?, cia = ?, valor_a_pagar = ?, status = ?, motivo_negacao = ?
@@ -212,8 +289,6 @@ async function aplicarMotorDeRegras(casoId) {
   );
 }
 
-// Processa um ZIP: identifica uma pasta por segurado, junta o texto dos documentos dela,
-// e usa processarUnidadeDocumental para decidir se atualiza um caso existente ou cria um novo.
 async function processarZip(caminhoZip) {
   const zip = new AdmZip(caminhoZip);
   const entradas = zip.getEntries();
@@ -302,15 +377,8 @@ app.get('/casos', async (req, res) => {
     const { status, parceiro } = req.query;
     let query = 'SELECT * FROM casos WHERE 1=1';
     const parametros = [];
-
-    if (status) {
-      query += ' AND status = ?';
-      parametros.push(status);
-    }
-    if (parceiro) {
-      query += ' AND parceiro = ?';
-      parametros.push(parceiro);
-    }
+    if (status) { query += ' AND status = ?'; parametros.push(status); }
+    if (parceiro) { query += ' AND parceiro = ?'; parametros.push(parceiro); }
     query += ' ORDER BY id DESC';
 
     const [linhas] = await pool.query(query, parametros);
@@ -318,6 +386,45 @@ app.get('/casos', async (req, res) => {
   } catch (erro) {
     console.error(erro);
     res.status(500).json({ erro: 'Falha ao buscar os casos: ' + erro.message });
+  }
+});
+
+app.put('/api/casos/:id', async (req, res) => {
+  try {
+    const casoId = req.params.id;
+    const usuarioLogado = req.session.usuario.nome;
+    const camposPermitidos = ['segurado', 'cpf_ccb', 'parceiro', 'cobertura', 'data_contratacao', 'data_evento', 'data_admissao'];
+
+    const [linhas] = await pool.query('SELECT * FROM casos WHERE id = ?', [casoId]);
+    if (linhas.length === 0) return res.status(404).json({ erro: 'Caso não encontrado.' });
+    const casoAntes = linhas[0];
+
+    for (const campo of camposPermitidos) {
+      if (Object.prototype.hasOwnProperty.call(req.body, campo)) {
+        const valorNovo = req.body[campo];
+        await registrarHistorico(casoId, campo, casoAntes[campo], valorNovo, usuarioLogado);
+        await pool.query(`UPDATE casos SET ${campo} = ? WHERE id = ?`, [valorNovo, casoId]);
+      }
+    }
+
+    await aplicarMotorDeRegras(casoId, usuarioLogado);
+    res.json({ mensagem: 'Caso atualizado com sucesso.' });
+  } catch (erro) {
+    console.error(erro);
+    res.status(500).json({ erro: 'Falha ao atualizar o caso: ' + erro.message });
+  }
+});
+
+app.get('/api/historico/:casoId', async (req, res) => {
+  try {
+    const [linhas] = await pool.query(
+      'SELECT * FROM historico WHERE caso_id = ? ORDER BY data_hora DESC',
+      [req.params.casoId]
+    );
+    res.json(linhas);
+  } catch (erro) {
+    console.error(erro);
+    res.status(500).json({ erro: 'Falha ao buscar histórico: ' + erro.message });
   }
 });
 

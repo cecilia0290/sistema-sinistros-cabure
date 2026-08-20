@@ -71,6 +71,11 @@
     }
 
     carregarDashboard();
+           document.getElementById('link-sair').addEventListener('click', async (evento) => {
+         evento.preventDefault();
+         await fetch('/logout', { method: 'POST' });
+         window.location.href = '/login.html';
+       });
   </script>
 </body>
 </html>

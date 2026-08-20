@@ -24,6 +24,7 @@
     <a href="/dashboard.html">Dashboard</a>
     <a href="/pagar-agora.html">Pagar Agora</a>
     <a href="/exportar">Exportar Excel</a>
+    <a href="#" id="link-sair" style="float:right;">Sair</a>
   </nav>
 
   <h1>Todos os Casos</h1>
@@ -152,6 +153,11 @@
     });
 
     carregarCasos();
+      document.getElementById('link-sair').addEventListener('click', async (evento) => {
+         evento.preventDefault();
+         await fetch('/logout', { method: 'POST' });
+         window.location.href = '/login.html';
+       });
   </script>
 </body>
 </html>
