@@ -75,13 +75,13 @@
             <div class="stat-value" id="stat-conferencia">0</div>
             <div class="stat-sub">leitura automática não concluiu</div>
           </a>
-          <div class="stat-card">
+          <a class="stat-card" href="/index.html?classif=PAGO" style="text-decoration:none;">
             <div class="stat-top"><span class="stat-label">Pagos</span>
               <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.3 2.3L16 9.5"/></svg></div>
             </div>
             <div class="stat-value" id="stat-pagos">0</div>
-            <div class="stat-sub">encerrados</div>
-          </div>
+            <div class="stat-sub" id="stat-pagos-sub">já pago (planilha + comprovante)</div>
+          </a>
           <div class="stat-card">
             <div class="stat-top"><span class="stat-label">Cancelados</span>
               <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6L6 18"/></svg></div>
@@ -162,6 +162,10 @@
       document.getElementById('stat-negados').textContent = dados.negados || 0;
       document.getElementById('stat-conferencia').textContent = dados.emConferencia || 0;
       document.getElementById('stat-pagos').textContent = dados.pagos || 0;
+      if (dados.pagosComprovante != null) {
+        document.getElementById('stat-pagos-sub').textContent =
+          `já pago — ${dados.pagosComprovante} por comprovante`;
+      }
       document.getElementById('stat-cancelados').textContent = dados.cancelados || 0;
       document.getElementById('chart-total-valor').textContent = fmtBRL(dados.totalAPagar);
       document.getElementById('header-meta').textContent = 'Atualizado ' + new Date().toLocaleString('pt-BR');

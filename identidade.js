@@ -30,6 +30,17 @@ function normalizarCpf(valor) {
   return d.padStart(11, '0');
 }
 
+// CCB / nº de contrato -> forma canônica para casar com `pagamentos_confirmados`
+// e com as allowlists de config-pagamento.js:  só dígitos, sem zeros à esquerda.
+//   "008.000.073-62" -> "800007362" ; "CCB 0004701" -> "4701" ; "" / "0" -> null
+// Obs.: zerar os zeros à esquerda faz "0123" e "123" colidirem — aceitável na
+// operação (os números reais não têm essa ambiguidade) e necessário porque o
+// CPF-fake da SETHI vem ora com, ora sem o zero.
+function normalizarCcb(valor) {
+  const d = apenasDigitos(valor).replace(/^0+/, '');
+  return d || null;
+}
+
 // Quebra "123/456", "123 / 456", "123-456", "123 e 456", "123;456", "123+456"
 // em ['123', '456'].  NÃO quebra um CPF pontuado ("123.456.789-01"): ponto e
 // hífen internos de CPF não separam itens.
@@ -120,6 +131,7 @@ class Uniao {
 module.exports = {
   apenasDigitos,
   normalizarCpf,
+  normalizarCcb,
   separarCcbComposto,
   analisarCpfCcb,
   chavesIdentidade,

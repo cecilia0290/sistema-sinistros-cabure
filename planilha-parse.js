@@ -133,7 +133,11 @@ const CATEGORIA_ROTULO = {
   JA_PAGO: 'JÁ PAGO',
   NAO_PAGAR: 'NÃO PAGAR',
   PENDENTE: 'PENDENTE DE CLASSIFICAÇÃO',
-  NAO_RECONHECIDO: 'NÃO RECONHECIDO'
+  NAO_RECONHECIDO: 'NÃO RECONHECIDO',
+  // Overrides do CASO (não vêm da coluna CASOS A PAGAR — ver planilha-transform.js):
+  JA_PAGO_CONFIRMADO: 'JÁ PAGO (comprovante)',        // CCB achado em pagamentos_confirmados
+  BLOQUEADO_REEMPREGO: 'BLOQUEADO - REEMPREGO',        // fora de cobertura, tratado à mão
+  AGUARDANDO_VALOR_MANUAL: 'AGUARDANDO VALOR MANUAL'   // avulso: falta o valor, preencher à mão
 };
 
 // -> { categoria, rotulo, aPagar, franquiaAte, programadoPara, avisar, bruto }

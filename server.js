@@ -612,6 +612,20 @@ app.get('/api/dashboard', async (req, res) => {
     );
 
     const [[{ n: emConferencia }]] = await pool.query('SELECT COUNT(*) AS n FROM casos WHERE conferencia_pendente = 1');
+
+    // "Pagos" / "Cancelados" NÃO saem da coluna `status` (o motor nunca gera esses
+    // valores) — saem de `classificacao_pagamento`, que a importação preenche a
+    // partir da planilha (JÁ PAGO) e da tabela pagamentos_confirmados
+    // (JÁ PAGO (comprovante)). Contamos os dois juntos.
+    const [[{ n: pagos }]] = await pool.query(
+      "SELECT COUNT(*) AS n FROM casos WHERE classificacao_pagamento IN ('JÁ PAGO', 'JÁ PAGO (comprovante)')"
+    );
+    const [[{ n: pagosComprovante }]] = await pool.query(
+      "SELECT COUNT(*) AS n FROM casos WHERE classificacao_pagamento = 'JÁ PAGO (comprovante)'"
+    );
+    const [[{ n: cancelados }]] = await pool.query(
+      "SELECT COUNT(*) AS n FROM casos WHERE classificacao_pagamento = 'CANCELADO' OR status = 'CANCELADO'"
+    );
     const [porCia] = await pool.query(
       `SELECT COALESCE(cia, '(sem CIA)') AS cia, COUNT(*) AS quantidade,
               COALESCE(SUM(CASE WHEN ${CRITERIO_A_PAGAR} THEN valor_a_pagar_final ELSE 0 END), 0) AS total_a_pagar
@@ -635,8 +649,9 @@ app.get('/api/dashboard', async (req, res) => {
       emConferencia,
       pendentes: contar('AGUARDANDO DOC', 'AGUARDANDO OCR MANUAL', 'NOVO'),
       negados: contar('NEGADO'),
-      pagos: contar('PAGO'),
-      cancelados: contar('CANCELADO')
+      pagos,
+      pagosComprovante,
+      cancelados
     });
   } catch (erro) {
     console.error(erro);

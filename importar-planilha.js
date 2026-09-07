@@ -25,18 +25,23 @@ const XLSX = require('xlsx');
 const pool = require('./db');
 const P = require('./planilha-parse');
 const { transformar, aplicarMotor, brl } = require('./planilha-transform');
+const { normalizarCcb } = require('./identidade');
 
 // ----------------------------------------------------------------------------
 // CLI
 // ----------------------------------------------------------------------------
 const args = process.argv.slice(2);
-const opcoes = { aba: 'planilha geral', dryRun: false, sim: false, arquivo: null, linhas: null, liberarProgTodos: false, liberarProgLista: null };
+const opcoes = { aba: 'planilha geral', dryRun: false, sim: false, arquivo: null, linhas: null, liberarProgTodos: false, liberarProgLista: null, pagamentosSim: null };
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === '--dry-run' || a === '--dryrun') opcoes.dryRun = true;
   else if (a === '--sim' || a === '-y') opcoes.sim = true;
   else if (a === '--aba') opcoes.aba = args[++i];
   else if (a === '--linhas') opcoes.linhas = args[++i];
+  // "E se estes CCBs já estivessem pagos?" — carrega o conjunto de um JSON
+  // (array de CCB, ou objetos {ccb}) EM VEZ da tabela pagamentos_confirmados.
+  // Só faz sentido com --dry-run. Serve para simular antes de gravar de verdade.
+  else if (a === '--pagamentos-sim') opcoes.pagamentosSim = args[++i];
   else if (a === '--liberar-programados') {
     // sem valor (ou "todos") => libera todos; com valor => só esses CCB/CPF
     const prox = args[i + 1];
@@ -51,6 +56,7 @@ for (let i = 0; i < args.length; i++) {
 // config-pagamento.js + o que vier em --liberar-programados "123,456".
 const liberadosChaves = new Set();
 const fundoCorrigido = new Map();
+const casosManuais = new Map();   // ccb normalizado -> { acao, nota, ... } (config-pagamento.casosManuais)
 try {
   const cfg = require('./config-pagamento');
   for (const item of (cfg.programadosLiberados || [])) {
@@ -61,6 +67,10 @@ try {
     const info = { fundo: item.fundo, nota: item.nota };
     if (item.ccb) fundoCorrigido.set(String(item.ccb).replace(/\D/g, ''), info);
     if (item.cpf) fundoCorrigido.set(String(item.cpf).replace(/\D/g, '').padStart(11, '0'), info);
+  }
+  for (const item of (cfg.casosManuais || [])) {
+    const k = normalizarCcb(item.ccb || item.cpf);
+    if (k) casosManuais.set(k, item);
   }
 } catch (e) { /* sem config, tudo bem */ }
 if (opcoes.liberarProgLista) {
@@ -316,6 +326,26 @@ function relatorio(aba, resultado, casos) {
   L(`  Casos (apos dedupe) que ENTRAM no total A PAGAR: ${casos.filter(c => c.casos_a_pagar === 1).length}`);
   L(`  Casos "AGUARDANDO REGRA / PARCEIRO NAO IDENTIFICADO" (fora do total): ${nParcNaoId}`);
 
+  // --- OVERRIDES do caso (vem ANTES da coluna CASOS A PAGAR) ---
+  const ov = resultado.overrides || {};
+  if (ov.pagamentoConfirmado || ov.bloqueadoReemprego || ov.aguardandoValorManual || ov.casadoPorCpfComRessalva) {
+    L('');
+    L('  ---------- OVERRIDES (registro de pagamento real / config manual) ----------');
+    lin('JA PAGO por comprovante', ov.pagamentoConfirmado,
+      ov.resgatadosDeAPagar ? `(${ov.resgatadosDeAPagar} deles a planilha ainda dizia A PAGAR/PROGRAMADO)` : '');
+    lin('BLOQUEADO - REEMPREGO', ov.bloqueadoReemprego, '(fora de cobertura)');
+    lin('AGUARDANDO VALOR MANUAL', ov.aguardandoValorManual, '(preencher o valor antes de pagar)');
+    lin('casou por CPF - NAO reclassificado', ov.casadoPorCpfComRessalva, '(caso tem CCB proprio / CPF em varios emprestimos - conferir)');
+    const listar = (pred, titulo) => {
+      const l = casos.filter(pred);
+      if (!l.length) return;
+      L(`    ${titulo}:`);
+      for (const c of l) L(`      ${(c.segurado || '?').slice(0, 34).padEnd(34)} | ${(c.cpf_ccb || '?').padEnd(26)} | ${(c.parceiro || '—')}`);
+    };
+    listar(c => c.bloqueado_reemprego, 'BLOQUEADO - REEMPREGO');
+    listar(c => c.aguardando_valor_manual, 'AGUARDANDO VALOR MANUAL');
+  }
+
   // --- PROGRAMADO: listar 1 a 1 (liberados por conferência vs. ainda pendentes) ---
   const linhaProg = c => `    ${(c.segurado || '?').slice(0, 32).padEnd(32)} | ${(c.cpf_ccb || '?').padEnd(26)} | ` +
     `${(c.parceiro || '—').padEnd(10)} | data ${c.data_programada || '?'} | ${brl(c.valor_a_pagar_final)}`;
@@ -417,13 +447,43 @@ function confirmar() {
 }
 
 // ----------------------------------------------------------------------------
+// CCBs (normalizados) que já constam como PAGOS na tabela pagamentos_confirmados.
+// Se a tabela ainda não existe (primeira execução), segue com o conjunto vazio.
+async function carregarPagamentosConfirmados() {
+  const set = new Set();
+  if (opcoes.pagamentosSim) {
+    const bruto = JSON.parse(fs.readFileSync(opcoes.pagamentosSim, 'utf8'));
+    for (const item of (Array.isArray(bruto) ? bruto : [])) {
+      const k = normalizarCcb(typeof item === 'string' ? item : (item && (item.ccb || item.cpf)));
+      if (k) set.add(k);
+    }
+    console.log(`  [SIMULACAO] ${set.size} CCB(s) de ${opcoes.pagamentosSim} tratados como JÁ PAGO (tabela pagamentos_confirmados ignorada).`);
+    return set;
+  }
+  try {
+    const [linhas] = await pool.query('SELECT ccb FROM pagamentos_confirmados');
+    for (const l of linhas) { const k = normalizarCcb(l.ccb); if (k) set.add(k); }
+    console.log(`  pagamentos_confirmados: ${set.size} CCB(s) distintos marcados como JÁ PAGO.`);
+  } catch (e) {
+    if (e && e.code === 'ER_NO_SUCH_TABLE') {
+      console.log('  [aviso] tabela `pagamentos_confirmados` ainda não existe — rode `node setup-db.js` e `node importar-pagamentos.js` primeiro. Seguindo sem ela.');
+    } else {
+      console.log('  [aviso] não consegui ler `pagamentos_confirmados` (' + e.message + '). Seguindo sem ela.');
+    }
+  }
+  return set;
+}
+
 (async () => {
   try {
     const aba = lerAba();
+    const pagamentosConfirmados = await carregarPagamentosConfirmados();
     const resultado = transformar(aba.mapa, aba.linhas, {
       liberarProgramadosTodos: opcoes.liberarProgTodos,
       liberadosChaves,
-      fundoCorrigido
+      fundoCorrigido,
+      pagamentosConfirmados,
+      casosManuais
     });
     const casos = resultado.casos.map(aplicarMotor);
     relatorio(aba, resultado, casos);

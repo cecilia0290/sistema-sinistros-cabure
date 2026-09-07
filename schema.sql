@@ -148,6 +148,32 @@ CREATE TABLE IF NOT EXISTS historico (
 ) ENGINE=InnoDB;
 
 -- ----------------------------------------------------------------------------
+-- Pagamentos JÁ REALIZADOS (comprovantes + planilhas de pagamento por parceiro,
+-- e a planilha da MetLife). É a FONTE DA VERDADE sobre o que já foi pago — a
+-- planilha mãe pode estar desatualizada e ainda dizer "A PAGAR".
+--   Carga:  node importar-pagamentos.js <pasta|zip> [--metlife <arquivo.xlsx>]
+--   Uso:    a classificação da planilha (planilha-transform.js) consulta esta
+--           tabela ANTES da coluna CASOS A PAGAR: CCB aqui => o caso é JÁ PAGO.
+-- Um mesmo empréstimo (ccb) pode ter mais de uma linha (mais de um pagamento);
+-- a classificação só verifica "existe pelo menos uma".
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS pagamentos_confirmados (
+  id             INT AUTO_INCREMENT PRIMARY KEY,
+  ccb            VARCHAR(40)  NOT NULL,                 -- CCB NORMALIZADO: só dígitos, sem zeros à esquerda (identidade.normalizarCcb). Para SETHI é o nº interno.
+  ccb_bruto      VARCHAR(120) NULL,                     -- como veio no arquivo (auditoria)
+  segurado       VARCHAR(200) NULL,
+  parceiro       VARCHAR(120) NULL,                     -- nome canônico (regras.normalizarParceiro) quando reconhecido
+  valor_pago     DECIMAL(12,2) NULL,
+  data_pagamento DATE NULL,
+  fonte_arquivo  VARCHAR(255) NOT NULL,                 -- caminho do arquivo dentro do zip, ou "MetLife: <arquivo>"
+  observacao     VARCHAR(255) NULL,
+  criado_em      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_pgto_ccb       (ccb),
+  KEY idx_pgto_parceiro  (parceiro),
+  KEY idx_pgto_data      (data_pagamento)
+) ENGINE=InnoDB;
+
+-- ----------------------------------------------------------------------------
 -- Linhas cruas da planilha mãe (auditoria da importação).
 -- Uma pessoa pode ter VÁRIAS linhas aqui, mas UM só registro em `casos`.
 -- ----------------------------------------------------------------------------

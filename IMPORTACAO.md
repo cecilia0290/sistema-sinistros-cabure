@@ -38,6 +38,41 @@ node importar-planilha.js "C:\caminho\planilha-mae.xlsx"
 Isso **TRUNCA** `casos`, `documentos`, `extracoes_ia`, `historico`, `linhas_planilha`
 e recarrega tudo a partir da planilha.
 
+## Pagamentos já realizados (`pagamentos_confirmados`) — a planilha mãe pode estar desatualizada
+
+A planilha mãe às vezes continua dizendo **A PAGAR** para casos que **já foram pagos**
+(ninguém voltou lá pra marcar). Para isso existe a tabela **`pagamentos_confirmados`**,
+que é a **fonte da verdade sobre o que já foi pago**.
+
+```bash
+node setup-db.js                         # cria a tabela (idempotente)
+# árvore de comprovantes em subpastas por parceiro + a planilha da MetLife à parte:
+node importar-pagamentos.js "C:\...\pagamentos" --metlife "C:\...\metlife.xlsx" --dry-run
+node importar-pagamentos.js "C:\...\pagamentos" --metlife "C:\...\metlife.xlsx"   # grava
+```
+
+- Lê `.xlsx/.xls/.csv` (detecta cabeçalho e colunas CCB/segurado/valor/data) e `.pdf`
+  (1 comprovante = 1 pagamento, CCB/valor/data por regex). Arquivo ilegível entra no
+  relatório como **"NÃO LIDO — mapear à mão"**.
+- Grava: `ccb` **normalizado** (`identidade.normalizarCcb` — só dígitos, sem zeros à
+  esquerda; para SETHI é o nº interno), `parceiro`, `valor_pago`, `data_pagamento`,
+  `fonte_arquivo`.
+- Padrão **trunca e recarrega**; `--append` só acrescenta.
+
+Depois disso, `importar-planilha.js` passa a aplicar **overrides ANTES da coluna
+CASOS A PAGAR**:
+
+| Situação | Resultado |
+|---|---|
+| CCB consta em `pagamentos_confirmados` | **JÁ PAGO (comprovante)** — ignora o que a planilha diga, não entra em A PAGAR |
+| `config-pagamento.casosManuais` com `acao: 'BLOQUEADO_REEMPREGO'` | **BLOQUEADO - REEMPREGO** — fora de cobertura, nem a pagar nem já pago |
+| `config-pagamento.casosManuais` com `acao: 'JA_PAGO'` | **JÁ PAGO** — pagamento confirmado por fora da tabela (comprovante sem CCB, casado por nome; casa pelo `cpf`) |
+| `config-pagamento.casosManuais` com `acao: 'AGUARDANDO_VALOR_MANUAL'` | **AGUARDANDO VALOR MANUAL** — retido até alguém preencher o valor certo |
+
+Prioridade: BLOQUEADO_REEMPREGO > JA_PAGO manual > pagamento confirmado (tabela) >
+AGUARDANDO_VALOR_MANUAL > fluxo normal da planilha. Entradas de `casosManuais` casam
+por `ccb` (normalizado) ou, quando o caso não tem CCB, por `cpf` (11 díg.).
+
 ## Como as regras são aplicadas na importação
 
 | Assunto | Regra |

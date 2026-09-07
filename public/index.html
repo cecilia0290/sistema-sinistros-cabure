@@ -44,8 +44,12 @@
               <option value="EM CARÊNCIA / ANÁLISE">EM CARÊNCIA / ANÁLISE</option>
               <option value="NEGADO">NEGADO</option>
               <option value="AGUARDANDO CONFERÊNCIA MANUAL">AGUARDANDO CONFERÊNCIA MANUAL</option>
-              <option value="PAGO">PAGO</option>
-              <option value="CANCELADO">CANCELADO</option>
+            </select>
+          </label>
+          <label>Pagamento
+            <select id="filtro-classif">
+              <option value="">Todos</option>
+              <option value="PAGO">Já pago (planilha + comprovante)</option>
             </select>
           </label>
           <label>Parceiro
@@ -114,6 +118,7 @@
       { chave: 'data_upload', rotulo: 'Adicionado em', tipo: 'data' },
       { chave: 'valor_a_pagar_final', rotulo: 'Valor a pagar', tipo: 'moeda' },
       { chave: 'status', rotulo: 'Status', tipo: 'status', fixa: true },
+      { chave: 'classificacao_pagamento', rotulo: 'Classif. pagamento', tipo: 'texto' },
       { chave: 'motivo', rotulo: 'Motivo (negado / conferência)', tipo: 'motivo' }
     ];
     const COLUNAS_PADRAO_VISIVEIS = ['id', 'segurado', 'cpf_ccb', 'parceiro', 'cobertura', 'data_evento', 'valor_a_pagar_final', 'status'];
@@ -226,8 +231,17 @@
     });
 
     // --- Filtros, busca, ordenação, paginação (tudo client-side, sobre os casos já carregados) ---
+    // "PAGO" no filtro de pagamento = qualquer "JÁ PAGO*" (planilha ou comprovante).
+    function casoBatePagamento(caso, classif) {
+      if (!classif) return true;
+      const v = caso.classificacao_pagamento || '';
+      if (classif === 'PAGO') return v === 'JÁ PAGO' || v === 'JÁ PAGO (comprovante)';
+      return v === classif;
+    }
+
     function aplicarFiltrosEBusca() {
       const status = document.getElementById('filtro-status').value;
+      const classif = document.getElementById('filtro-classif').value;
       const parceiro = document.getElementById('filtro-parceiro').value;
       const criadoDe = document.getElementById('filtro-criado-de').value;
       const criadoAte = document.getElementById('filtro-criado-ate').value;
@@ -236,12 +250,13 @@
 
       return casosTodos.filter(caso => {
         if (status && caso.status !== status) return false;
+        if (!casoBatePagamento(caso, classif)) return false;
         if (parceiro && caso.parceiro !== parceiro) return false;
         if (soConferencia && !Number(caso.conferencia_pendente)) return false;
         if (criadoDe && (!caso.data_upload || caso.data_upload.slice(0, 10) < criadoDe)) return false;
         if (criadoAte && (!caso.data_upload || caso.data_upload.slice(0, 10) > criadoAte)) return false;
         if (busca) {
-          const alvo = [caso.id, caso.segurado, caso.cpf_ccb, caso.parceiro, caso.cobertura, caso.cia, caso.nome_arquivo, motivoDoCaso(caso)]
+          const alvo = [caso.id, caso.segurado, caso.cpf_ccb, caso.parceiro, caso.cobertura, caso.cia, caso.nome_arquivo, caso.classificacao_pagamento, motivoDoCaso(caso)]
             .filter(Boolean).join(' ').toLowerCase();
           if (!alvo.includes(busca)) return false;
         }
@@ -267,6 +282,7 @@
 
     function montarChips() {
       const status = document.getElementById('filtro-status').value;
+      const classif = document.getElementById('filtro-classif').value;
       const parceiro = document.getElementById('filtro-parceiro').value;
       const busca = document.getElementById('busca').value.trim();
       const chips = [];
@@ -276,6 +292,7 @@
       const soConf = document.getElementById('filtro-conferencia').checked;
 
       if (status) chips.push({ rotulo: 'Status: ' + status, aoRemover: () => { document.getElementById('filtro-status').value = ''; } });
+      if (classif) chips.push({ rotulo: 'Pagamento: ' + (classif === 'PAGO' ? 'Já pago' : classif), aoRemover: () => { document.getElementById('filtro-classif').value = ''; } });
       if (parceiro) chips.push({ rotulo: 'Parceiro: ' + parceiro, aoRemover: () => { document.getElementById('filtro-parceiro').value = ''; } });
       if (soConf) chips.push({ rotulo: 'Só conferência manual', aoRemover: () => { document.getElementById('filtro-conferencia').checked = false; } });
       if (criadoDe) chips.push({ rotulo: 'Adicionado ≥ ' + criadoDe, aoRemover: () => { document.getElementById('filtro-criado-de').value = ''; } });
@@ -287,6 +304,16 @@
       container.querySelectorAll('button').forEach(btn => {
         btn.addEventListener('click', () => { chips[Number(btn.dataset.i)].aoRemover(); paginaAtual = 1; renderizar(); });
       });
+    }
+
+    function montarSelectClassif() {
+      const sel = document.getElementById('filtro-classif');
+      const selecionado = sel.value;
+      const unicos = [...new Set(casosTodos.map(c => c.classificacao_pagamento).filter(Boolean))].sort();
+      sel.innerHTML = '<option value="">Todos</option>'
+        + '<option value="PAGO">Já pago (planilha + comprovante)</option>'
+        + unicos.map(p => `<option value="${p}">${p}</option>`).join('');
+      sel.value = selecionado;
     }
 
     function montarSelectParceiros() {
@@ -332,20 +359,25 @@
       const resposta = await fetch('/casos');
       casosTodos = await resposta.json();
       montarSelectParceiros();
+      montarSelectClassif();
       montarPainelColunas();
       renderizar();
     }
 
-    // Lê ?status=... / ?conferencia=1 / ?cia=... da URL (links do menu lateral)
+    // Lê ?status=... / ?classif=... / ?conferencia=1 / ?cia=... da URL (links do menu lateral)
     const parametrosUrl = new URLSearchParams(window.location.search);
     if (parametrosUrl.get('status')) {
       document.getElementById('filtro-status').value = parametrosUrl.get('status');
+    }
+    if (parametrosUrl.get('classif')) {
+      // ?classif=PAGO agrupa "JÁ PAGO" + "JÁ PAGO (comprovante)"; outros valores são exatos
+      document.getElementById('filtro-classif').value = parametrosUrl.get('classif');
     }
     if (parametrosUrl.get('conferencia') === '1') {
       document.getElementById('filtro-conferencia').checked = true;
     }
 
-    ['filtro-status', 'filtro-parceiro', 'filtro-criado-de', 'filtro-criado-ate'].forEach(id =>
+    ['filtro-status', 'filtro-classif', 'filtro-parceiro', 'filtro-criado-de', 'filtro-criado-ate'].forEach(id =>
       document.getElementById(id).addEventListener('change', () => { paginaAtual = 1; renderizar(); }));
     document.getElementById('filtro-conferencia').addEventListener('change', () => { paginaAtual = 1; renderizar(); });
     document.getElementById('busca').addEventListener('input', () => { paginaAtual = 1; renderizar(); });

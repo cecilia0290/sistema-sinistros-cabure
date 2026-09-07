@@ -5,7 +5,7 @@
 // ============================================================================
 
 const { calcularCaso, produtoDoParceiro } = require('./regras');
-const { chavesIdentidade, formatarCpfCcb, separarCcbComposto, analisarCpfCcb, Uniao } = require('./identidade');
+const { chavesIdentidade, formatarCpfCcb, separarCcbComposto, analisarCpfCcb, normalizarCcb, Uniao } = require('./identidade');
 const P = require('./planilha-parse');
 
 function brl(n) {
@@ -16,14 +16,21 @@ function brl(n) {
 // `linhas`: array de objetos { __linha: <n>, col0, col1, ... }  (valores já "crus" da célula)
 // `mapa`  : { campoLogico: <indiceDaColuna> }
 // `opcoes`: { liberarProgramadosTodos: bool, liberadosChaves: Set<digitos>,
-//             fundoCorrigido: Map<digitos, {fundo, nota}> }
+//             fundoCorrigido: Map<digitos, {fundo, nota}>,
+//             pagamentosConfirmados: Set<ccbNormalizado>,   // tabela pagamentos_confirmados
+//             casosManuais: Map<ccbNormalizado, {acao, nota, ...}> }  // config-pagamento.casosManuais
 //           -> promove casos "PROGRAMADO" para "A PAGAR" (conferência manual);
 //              fundoCorrigido substitui a coluna FUNDO da planilha por engano
-//              de digitação já confirmado manualmente (config-pagamento.js)
+//              de digitação já confirmado manualmente (config-pagamento.js);
+//              pagamentosConfirmados/casosManuais aplicam OVERRIDES ao caso ANTES
+//              da coluna CASOS A PAGAR (o registro de pagamento real manda).
 function transformar(mapa, linhas, opcoes = {}) {
   const avisos = [];
   const liberarTodos = !!opcoes.liberarProgramadosTodos;
   const liberados = opcoes.liberadosChaves instanceof Set ? opcoes.liberadosChaves : new Set();
+  const pagamentosConfirmados = opcoes.pagamentosConfirmados instanceof Set ? opcoes.pagamentosConfirmados : new Set();
+  const casosManuais = opcoes.casosManuais instanceof Map ? opcoes.casosManuais : new Map();
+  let nPagamentoConfirmado = 0, nBloqueado = 0, nAguardandoValor = 0, nResgatadosDeAPagar = 0;
   const get = (linha, campo) => (mapa[campo] === undefined ? null : linha['col' + mapa[campo]]);
   const txt = v => (P.vazio(v) ? null : String(v).trim().replace(/\s+/g, ' '));
 
@@ -128,6 +135,17 @@ function transformar(mapa, linhas, opcoes = {}) {
     return null;
   };
 
+  // Quantos GRUPOS (casos) distintos compartilham cada CPF — usado para não casar
+  // um pagamento por CPF quando a pessoa tem mais de um empréstimo (ambíguo).
+  const gruposPorCpf = new Map();
+  for (const [rep, regs] of grupos) {
+    for (const reg of regs) if (reg._cpf) {
+      if (!gruposPorCpf.has(reg._cpf)) gruposPorCpf.set(reg._cpf, new Set());
+      gruposPorCpf.get(reg._cpf).add(rep);
+    }
+  }
+
+  let nCasadoPorCpfComRessalva = 0;
   const casos = [];
   for (const regs of grupos.values()) {
     regs.sort((a, b) => a.linhaOrigem - b.linhaOrigem);
@@ -138,14 +156,76 @@ function transformar(mapa, linhas, opcoes = {}) {
       ...regs.map(r => r._cpf).filter(Boolean),
       ...regs.flatMap(r => r._ccbs || [])
     ]);
+    // Chaves normalizadas (só dígitos, sem zeros à esquerda) do grupo — para
+    // casar com pagamentos_confirmados e com config-pagamento.casosManuais.
+    const chavesNorm = new Set([...digitosGrupo].map(normalizarCcb).filter(Boolean));
+    const infoManual = (() => {
+      for (const k of chavesNorm) { const m = casosManuais.get(k); if (m) return m; }
+      return null;
+    })();
 
-    let catCaso = categoriaDoCaso(regs);
+    // Categoria que a PLANILHA (coluna CASOS A PAGAR) daria, sem nenhum override.
+    const catPlanilha = categoriaDoCaso(regs);
+
+    // Como o CCB do caso casou com pagamentos_confirmados:
+    //   - por CCB  -> casamento forte (mesmo empréstimo)
+    //   - por CPF  -> só vale quando o caso NÃO tem CCB próprio (ex.: SETHI, cujo
+    //                 "CPF" é o nº do contrato) E esse CPF tem 1 caso só. Se a
+    //                 pessoa tem CCB próprio ou vários empréstimos, casar por CPF
+    //                 poderia atribuir o pagamento ao caso errado -> NÃO reclassifica,
+    //                 deixa a planilha decidir e gera aviso p/ conferência.
+    const ccbsGrupo = [...new Set(regs.flatMap(r => r._ccbs || []))];
+    const cpfsGrupo = [...new Set(regs.map(r => r._cpf).filter(Boolean))];
+    const matchPorCcb = ccbsGrupo.map(normalizarCcb).some(k => k && pagamentosConfirmados.has(k));
+    const matchPorCpf = cpfsGrupo.map(normalizarCcb).some(k => k && pagamentosConfirmados.has(k));
+    const cpfAmbiguo = cpfsGrupo.some(c => (gruposPorCpf.get(c) || new Set()).size > 1);
+    const pagamentoNaTabela = matchPorCcb || (matchPorCpf && ccbsGrupo.length === 0 && !cpfAmbiguo);
+    const casadoPorCpfComRessalva = !pagamentoNaTabela && matchPorCpf; // casou por CPF, mas com CCB próprio ou CPF em vários casos
+
+    // ----- OVERRIDES DO CASO — vêm ANTES da coluna CASOS A PAGAR -----
+    //  1) BLOQUEADO_REEMPREGO (config manual)     -> sai da operação
+    //  2) pagamento confirmado (comprovante real) -> JÁ PAGO, ignora a planilha
+    //  3) AGUARDANDO_VALOR_MANUAL (config manual) -> retido até preencher o valor
+    let override = null;
+    let confirmadoPorTabela = false;
+    if (infoManual && infoManual.acao === 'BLOQUEADO_REEMPREGO') override = 'BLOQUEADO_REEMPREGO';
+    else if (infoManual && infoManual.acao === 'JA_PAGO') override = 'JA_PAGO_CONFIRMADO';
+    else if (pagamentoNaTabela) { override = 'JA_PAGO_CONFIRMADO'; confirmadoPorTabela = true; }
+    else if (infoManual && infoManual.acao === 'AGUARDANDO_VALOR_MANUAL') override = 'AGUARDANDO_VALOR_MANUAL';
+
+    if (casadoPorCpfComRessalva && !override) {
+      nCasadoPorCpfComRessalva++;
+      avisos.push(`"${rotulo}": um pagamento bate com o CPF, mas o caso tem CCB próprio (${ccbsGrupo.join(', ')}) ou o CPF aparece em mais de um empréstimo — NÃO reclassifiquei como JÁ PAGO. Confira e, se for o caso, adicione o CCB certo em pagamentos_confirmados.`);
+    }
+
+    let catCaso;
     let programadoLiberado = false;
-    if (catCaso === 'PROGRAMADO') {
-      if (liberarTodos || [...digitosGrupo].some(d => liberados.has(d))) {
-        catCaso = 'A_PAGAR';
-        programadoLiberado = true;
-        avisos.push(`"${rotulo}": estava PROGRAMADO — liberado por conferência manual, entrou em A PAGAR.`);
+    const pagamentoConfirmado = override === 'JA_PAGO_CONFIRMADO';
+    const bloqueado = override === 'BLOQUEADO_REEMPREGO';
+    const aguardandoValorManual = override === 'AGUARDANDO_VALOR_MANUAL';
+
+    if (override) {
+      catCaso = pagamentoConfirmado ? 'JA_PAGO' : override;
+      if (pagamentoConfirmado) {
+        nPagamentoConfirmado++;
+        if (catPlanilha === 'A_PAGAR' || catPlanilha === 'PROGRAMADO') nResgatadosDeAPagar++;
+        const via = confirmadoPorTabela ? 'comprovante' : 'config-pagamento.js (' + (infoManual && infoManual.nota ? infoManual.nota : 'manual') + ')';
+        avisos.push(`"${rotulo}": pagamento CONFIRMADO via ${via} — reclassificado como JÁ PAGO (a planilha dizia "${P.CATEGORIA_ROTULO[catPlanilha] || catPlanilha}").`);
+      } else if (bloqueado) {
+        nBloqueado++;
+        avisos.push(`"${rotulo}": BLOQUEADO - REEMPREGO (config-pagamento.js) — fora de cobertura, não entra em A PAGAR nem em JÁ PAGO.`);
+      } else {
+        nAguardandoValor++;
+        avisos.push(`"${rotulo}": AGUARDANDO VALOR MANUAL — avulso pronto p/ pagamento, falta preencher o valor certo (era R$ 0,00 na planilha).`);
+      }
+    } else {
+      catCaso = catPlanilha;
+      if (catCaso === 'PROGRAMADO') {
+        if (liberarTodos || [...digitosGrupo].some(d => liberados.has(d))) {
+          catCaso = 'A_PAGAR';
+          programadoLiberado = true;
+          avisos.push(`"${rotulo}": estava PROGRAMADO — liberado por conferência manual, entrou em A PAGAR.`);
+        }
       }
     }
 
@@ -209,14 +289,34 @@ function transformar(mapa, linhas, opcoes = {}) {
       // por exemplo, NUNCA entra automático mesmo se houver linha "PAGAR" junto).
       casos_a_pagar: catCaso === 'A_PAGAR' ? 1 : 0,
       categoria_pagamento: catCaso,
+      categoria_pagamento_planilha: catPlanilha,
       programado_liberado: programadoLiberado,
-      classificacao_pagamento: programadoLiberado ? 'A PAGAR (ex-PROGRAMADO)' : P.CATEGORIA_ROTULO[catCaso],
+      pagamento_confirmado: pagamentoConfirmado,
+      bloqueado_reemprego: bloqueado,
+      aguardando_valor_manual: aguardandoValorManual,
+      override_nota: (override && infoManual) ? (infoManual.nota || null) : null,
+      classificacao_pagamento:
+          pagamentoConfirmado ? P.CATEGORIA_ROTULO.JA_PAGO_CONFIRMADO
+        : bloqueado ? P.CATEGORIA_ROTULO.BLOQUEADO_REEMPREGO
+        : aguardandoValorManual ? P.CATEGORIA_ROTULO.AGUARDANDO_VALOR_MANUAL
+        : programadoLiberado ? 'A PAGAR (ex-PROGRAMADO)'
+        : P.CATEGORIA_ROTULO[catCaso],
       franquia_ate: primeiro(regs, 'franquiaAte'),
       data_programada: primeiro(regs, 'programadoPara')
     });
   }
 
-  return { casos, avisos, categorias, totalLinhas: linhas.length, ignoradas: semChave.length };
+  return {
+    casos, avisos, categorias,
+    totalLinhas: linhas.length, ignoradas: semChave.length,
+    overrides: {
+      pagamentoConfirmado: nPagamentoConfirmado,
+      resgatadosDeAPagar: nResgatadosDeAPagar,
+      bloqueadoReemprego: nBloqueado,
+      aguardandoValorManual: nAguardandoValor,
+      casadoPorCpfComRessalva: nCasadoPorCpfComRessalva
+    }
+  };
 }
 
 // Categoria final do CASO a partir das suas linhas. Prioridade: PROGRAMADO acima

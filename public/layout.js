@@ -13,6 +13,10 @@
   const iconeUpload = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 15V3M8 7l4-4 4 4"/><path d="M4 15v4a2 2 0 002 2h12a2 2 0 002-2v-4"/></svg>';
 
   const q = (status) => '/index.html?status=' + encodeURIComponent(status);
+  // "Pagos"/"Cancelados" não vêm da coluna `status` (o motor nunca gera esses
+  // valores) — vêm de `classificacao_pagamento`. `?classif=PAGO` na tela agrupa
+  // "JÁ PAGO" (planilha) + "JÁ PAGO (comprovante)".
+  const qc = (classif) => '/index.html?classif=' + encodeURIComponent(classif);
 
   document.getElementById('sidebar').innerHTML = `
     <div class="sidebar-brand">
@@ -43,8 +47,8 @@
       <a class="nav-item" href="/por-cia.html?cia=Caburé">${iconePagar}<span>Caburé paga</span></a>
 
       <div class="nav-section">Encerrados</div>
-      <a class="nav-item" href="${q('PAGO')}"><span>Pagos</span></a>
-      <a class="nav-item" href="${q('CANCELADO')}"><span>Cancelados</span></a>
+      <a class="nav-item" href="${qc('PAGO')}"><span>Pagos</span></a>
+      <a class="nav-item" href="${qc('CANCELADO')}"><span>Cancelados</span></a>
       <a class="nav-item" href="${q('NEGADO')}"><span>Negados</span></a>
 
       <div class="nav-section">Análises</div>
