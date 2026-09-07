@@ -195,8 +195,8 @@ const COLS_CASO = ['origem', 'segurado', 'cpf_ccb', 'identidade_chaves', 'parcei
   'teto_planilha', 'parcelas_planilha', 'divergencia_produto',
   'carencia_dias', 'franquia_data', 'valor_a_pagar', 'valor_total_a_pagar',
   'status', 'motivo_negacao',
-  'franquia_planilha', 'franquia_ate', 'data_programada', 'status_planilha', 'classificacao_pagamento',
-  'valor_a_pagar_planilha', 'casos_a_pagar', 'valor_a_pagar_final'];
+  'franquia_planilha', 'franquia_ate', 'data_programada', 'status_planilha', 'classificacao_pagamento', 'observacao_pagamento',
+  'valor_a_pagar_planilha', 'casos_a_pagar', 'parcelas_pagas', 'parcelas_restantes', 'valor_a_pagar_final'];
 
 function valoresCaso(caso) {
   return [
@@ -209,8 +209,9 @@ function valoresCaso(caso) {
     caso.carencia_dias ?? null, caso.franquia_data || null, caso.valor_a_pagar ?? null, caso.valor_total_a_pagar ?? null,
     corta(caso.status, 40), corta(caso.motivo_negacao, 500),
     caso.franquia_planilha || null, caso.franquia_ate || null, caso.data_programada || null,
-    corta(caso.status_planilha, 80), corta(caso.classificacao_pagamento, 60),
-    caso.valor_a_pagar_planilha ?? null, caso.casos_a_pagar ? 1 : 0, caso.valor_a_pagar_final ?? null
+    corta(caso.status_planilha, 80), corta(caso.classificacao_pagamento, 60), corta(caso.override_nota, 255),
+    caso.valor_a_pagar_planilha ?? null, caso.casos_a_pagar ? 1 : 0,
+    caso.parcelas_pagas ?? null, caso.parcelas_restantes ?? null, caso.valor_a_pagar_final ?? null
   ];
 }
 
@@ -328,14 +329,32 @@ function relatorio(aba, resultado, casos) {
 
   // --- OVERRIDES do caso (vem ANTES da coluna CASOS A PAGAR) ---
   const ov = resultado.overrides || {};
-  if (ov.pagamentoConfirmado || ov.bloqueadoReemprego || ov.aguardandoValorManual || ov.casadoPorCpfComRessalva) {
+  if (ov.jaPagoCompleto || ov.proximaParcela || ov.bloqueadoReemprego || ov.aguardandoValorManual || ov.casadoPorCpfComRessalva || ov.pagamentoForaDoEscopo) {
     L('');
-    L('  ---------- OVERRIDES (registro de pagamento real / config manual) ----------');
-    lin('JA PAGO por comprovante', ov.pagamentoConfirmado,
-      ov.resgatadosDeAPagar ? `(${ov.resgatadosDeAPagar} deles a planilha ainda dizia A PAGAR/PROGRAMADO)` : '');
+    L('  ---------- CONCILIACAO COM pagamentos_confirmados (parcela a parcela) ----------');
+    lin('JA PAGO (completo)', ov.jaPagoCompleto,
+      `(${ov.pagamentoConfirmado || 0} por comprovante; ${ov.resgatadosDeAPagar || 0} a planilha ainda dizia A PAGAR/PROGRAMADO/FRANQUIA)`);
+    lin('A PAGAR - proxima parcela', ov.proximaParcela, '(tem pagamento, mas falta(m) parcela(s) - SEGUE no total)');
+    lin('pagamento fora do escopo', ov.pagamentoForaDoEscopo, '(tem comprovante, mas planilha = JA PAGO/PENDENTE/NAO PAGAR - mantido, so aviso)');
     lin('BLOQUEADO - REEMPREGO', ov.bloqueadoReemprego, '(fora de cobertura)');
     lin('AGUARDANDO VALOR MANUAL', ov.aguardandoValorManual, '(preencher o valor antes de pagar)');
     lin('casou por CPF - NAO reclassificado', ov.casadoPorCpfComRessalva, '(caso tem CCB proprio / CPF em varios emprestimos - conferir)');
+
+    // A PAGAR (proxima parcela) vs JA PAGO (completo) por parceiro
+    const porParc = {};
+    for (const c of casos) {
+      if (!c.pagamento_parcial && !(c.pagamento_confirmado && c.categoria_pagamento === 'JA_PAGO')) continue;
+      const p = c.parceiro || '—';
+      const o = porParc[p] = porParc[p] || { proxima: 0, proximaV: 0, completo: 0 };
+      if (c.pagamento_parcial) { o.proxima++; o.proximaV += Number(c.valor_a_pagar_final || 0); }
+      else o.completo++;
+    }
+    L('');
+    L('    parceiro              A PAGAR(prox.)   R$ prox. parcela   JA PAGO(completo)');
+    for (const [p, o] of Object.entries(porParc).sort((a, b) => b[1].proximaV - a[1].proximaV)) {
+      L(`    ${p.padEnd(20)} ${String(o.proxima).padStart(10)}   ${brl(o.proximaV).padStart(16)}   ${String(o.completo).padStart(10)}`);
+    }
+
     const listar = (pred, titulo) => {
       const l = casos.filter(pred);
       if (!l.length) return;
@@ -447,23 +466,26 @@ function confirmar() {
 }
 
 // ----------------------------------------------------------------------------
-// CCBs (normalizados) que já constam como PAGOS na tabela pagamentos_confirmados.
-// Se a tabela ainda não existe (primeira execução), segue com o conjunto vazio.
+// Map<CCB normalizado, nº de PARCELAS pagas> a partir de pagamentos_confirmados
+// (1 linha por CCB por lote = 1 parcela). Tabela ausente -> Map vazio.
 async function carregarPagamentosConfirmados() {
-  const set = new Set();
+  const mapa = new Map();
+  const inc = (k, n = 1) => { if (k) mapa.set(k, (mapa.get(k) || 0) + n); };
   if (opcoes.pagamentosSim) {
     const bruto = JSON.parse(fs.readFileSync(opcoes.pagamentosSim, 'utf8'));
     for (const item of (Array.isArray(bruto) ? bruto : [])) {
-      const k = normalizarCcb(typeof item === 'string' ? item : (item && (item.ccb || item.cpf)));
-      if (k) set.add(k);
+      if (item && typeof item === 'object') inc(normalizarCcb(item.ccb || item.cpf), Number(item.parcelas) || 1);
+      else inc(normalizarCcb(item));   // string repetida no array = mais parcelas
     }
-    console.log(`  [SIMULACAO] ${set.size} CCB(s) de ${opcoes.pagamentosSim} tratados como JÁ PAGO (tabela pagamentos_confirmados ignorada).`);
-    return set;
+    let tot = 0; for (const v of mapa.values()) tot += v;
+    console.log(`  [SIMULACAO] ${mapa.size} CCB(s) / ${tot} parcela(s) de ${opcoes.pagamentosSim} (tabela pagamentos_confirmados ignorada).`);
+    return mapa;
   }
   try {
-    const [linhas] = await pool.query('SELECT ccb FROM pagamentos_confirmados');
-    for (const l of linhas) { const k = normalizarCcb(l.ccb); if (k) set.add(k); }
-    console.log(`  pagamentos_confirmados: ${set.size} CCB(s) distintos marcados como JÁ PAGO.`);
+    const [linhas] = await pool.query('SELECT ccb, COUNT(*) AS parcelas FROM pagamentos_confirmados GROUP BY ccb');
+    for (const l of linhas) inc(normalizarCcb(l.ccb), Number(l.parcelas) || 1);
+    let tot = 0; for (const v of mapa.values()) tot += v;
+    console.log(`  pagamentos_confirmados: ${mapa.size} CCB(s) distintos, ${tot} parcela(s) paga(s).`);
   } catch (e) {
     if (e && e.code === 'ER_NO_SUCH_TABLE') {
       console.log('  [aviso] tabela `pagamentos_confirmados` ainda não existe — rode `node setup-db.js` e `node importar-pagamentos.js` primeiro. Seguindo sem ela.');
@@ -471,7 +493,7 @@ async function carregarPagamentosConfirmados() {
       console.log('  [aviso] não consegui ler `pagamentos_confirmados` (' + e.message + '). Seguindo sem ela.');
     }
   }
-  return set;
+  return mapa;
 }
 
 (async () => {

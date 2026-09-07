@@ -164,7 +164,8 @@
       document.getElementById('stat-pagos').textContent = dados.pagos || 0;
       if (dados.pagosComprovante != null) {
         document.getElementById('stat-pagos-sub').textContent =
-          `já pago — ${dados.pagosComprovante} por comprovante`;
+          `já pago — ${dados.pagosComprovante} completo(s) por comprovante` +
+          (dados.proximaParcela ? ` · ${dados.proximaParcela} ainda pagando parcelas` : '');
       }
       document.getElementById('stat-cancelados').textContent = dados.cancelados || 0;
       document.getElementById('chart-total-valor').textContent = fmtBRL(dados.totalAPagar);

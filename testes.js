@@ -151,37 +151,74 @@ teste('normalizarCcb: só dígitos, sem zeros à esquerda', () => {
   assert.strictEqual(ident.normalizarCcb(''), null);
 });
 
-teste('CCB em pagamentos_confirmados => JÁ PAGO, mesmo a planilha dizendo PAGAR', () => {
-  const mapa = { segurado: 0, cpf_ccb: 1, parceiro: 2, casos_a_pagar: 3, valor_a_pagar: 4 };
-  const linhas = [
-    { __linha: 2, col0: 'Ja Pago', col1: '11122233344 / 4701', col2: 'POUPACRED', col3: 'PAGAR', col4: '1000' },
-    { __linha: 3, col0: 'Ainda Deve', col1: '55566677788 / 4702', col2: 'POUPACRED', col3: 'PAGAR', col4: '1000' }
-  ];
-  const r = transformar(mapa, linhas, { pagamentosConfirmados: new Set(['4701']) });
-  const pago = r.casos.find(c => c.segurado === 'Ja Pago');
-  const deve = r.casos.find(c => c.segurado === 'Ainda Deve');
-  assert.strictEqual(pago.categoria_pagamento, 'JA_PAGO');
-  assert.strictEqual(pago.casos_a_pagar, 0);
-  assert.strictEqual(pago.pagamento_confirmado, true);
-  assert.strictEqual(pago.classificacao_pagamento, 'JÁ PAGO (comprovante)');
-  assert.strictEqual(deve.casos_a_pagar, 1);
-  assert.strictEqual(r.overrides.pagamentoConfirmado, 1);
-  assert.strictEqual(r.overrides.resgatadosDeAPagar, 1);
+teste('conciliação parcela a parcela: 6 de 6 pagas => JÁ PAGO (completo), sai de A PAGAR', () => {
+  const mapa = { segurado: 0, cpf_ccb: 1, parceiro: 2, casos_a_pagar: 3, valor_parcela: 4, data_contratacao: 5, data_evento: 6, data_admissao: 7, motivo_desligamento_codigo: 8 };
+  const linhas = [{ __linha: 2, col0: 'Sethi Completo', col1: '70000000001', col2: 'SETHI', col3: 'PAGAR', col4: '900', col5: '2025-01-01', col6: '2025-06-01', col7: '2020-01-01', col8: '2' }];
+  const r = transformar(mapa, linhas, { pagamentosConfirmados: new Map([['70000000001', 6]]) });
+  const c = r.casos.map(aplicarMotor)[0];
+  assert.strictEqual(c.categoria_pagamento, 'JA_PAGO');
+  assert.strictEqual(c.casos_a_pagar, 0);
+  assert.strictEqual(c.pagamento_confirmado, true);
+  assert.strictEqual(c.classificacao_pagamento, 'JÁ PAGO (completo)');
+  assert.strictEqual(c.parcelas_pagas, 6);
+  assert.strictEqual(c.parcelas_restantes, 0);
+  assert.strictEqual(r.overrides.jaPagoCompleto, 1);
 });
 
-teste('pagamento confirmado casa pelo CPF-fake da SETHI (com/sem zero à esquerda)', () => {
-  const mapa = { segurado: 0, cpf_ccb: 1, parceiro: 2, casos_a_pagar: 3, valor_a_pagar: 4 };
-  const linhas = [{ __linha: 2, col0: 'Sethi Pago', col1: '008.000.073-62', col2: 'SETHI', col3: 'PAGAR', col4: '281.30' }];
+teste('conciliação parcela a parcela: 2 de 6 pagas => SEGUE A PAGAR (próxima parcela)', () => {
+  const mapa = { segurado: 0, cpf_ccb: 1, parceiro: 2, casos_a_pagar: 3, valor_parcela: 4, data_contratacao: 5, data_evento: 6, data_admissao: 7, motivo_desligamento_codigo: 8 };
+  const linhas = [{ __linha: 2, col0: 'Sethi Parcial', col1: '70000000002', col2: 'SETHI', col3: 'PAGAR', col4: '1500', col5: '2025-01-01', col6: '2025-06-01', col7: '2020-01-01', col8: '2' }];
+  const r = transformar(mapa, linhas, { pagamentosConfirmados: new Map([['70000000002', 2]]) });
+  const c = r.casos.map(aplicarMotor)[0];
+  assert.strictEqual(c.categoria_pagamento, 'A_PAGAR');
+  assert.strictEqual(c.casos_a_pagar, 1);            // NÃO desaparece
+  assert.strictEqual(c.pagamento_parcial, true);
+  assert.strictEqual(c.parcelas_pagas, 2);
+  assert.strictEqual(c.parcelas_restantes, 4);
+  assert.strictEqual(c.valor_a_pagar_final, 1000);   // próxima parcela = min(1500, teto SETHI 1000)
+  assert.ok(/próxima parcela \(2\/6\)/.test(c.classificacao_pagamento), c.classificacao_pagamento);
+  assert.strictEqual(r.overrides.proximaParcela, 1);
+});
+
+teste('escopo: comprovante NÃO reclassifica caso que a planilha diz JÁ PAGO / NÃO PAGAR', () => {
+  const mapa = { segurado: 0, cpf_ccb: 1, parceiro: 2, casos_a_pagar: 3, valor_parcela: 4 };
+  const linhas = [
+    { __linha: 2, col0: 'Ja Pago Planilha', col1: '70000000010', col2: 'SETHI', col3: 'PAGO', col4: '900' },
+    { __linha: 3, col0: 'Nao Pagar', col1: '70000000011', col2: 'SETHI', col3: 'NAO PAGAR', col4: '900' },
+    { __linha: 4, col0: 'Em Franquia', col1: '70000000012', col2: 'SETHI', col3: 'ELEGIVEL - FRANQUIA ATE 01/02/2026', col4: '900' }
+  ];
+  const pg = new Map([['70000000010', 2], ['70000000011', 2], ['70000000012', 2]]);
+  const r = transformar(mapa, linhas, { pagamentosConfirmados: pg });
+  const jp = r.casos.find(c => c.segurado === 'Ja Pago Planilha');
+  const np = r.casos.find(c => c.segurado === 'Nao Pagar');
+  const fr = r.casos.find(c => c.segurado === 'Em Franquia');
+  assert.strictEqual(jp.categoria_pagamento, 'JA_PAGO');           // mantido
+  assert.strictEqual(jp.casos_a_pagar, 0);
+  assert.strictEqual(np.categoria_pagamento, 'NAO_PAGAR');          // mantido
+  assert.strictEqual(np.casos_a_pagar, 0);
+  assert.strictEqual(fr.categoria_pagamento, 'A_PAGAR');            // franquia ESTÁ no escopo
+  assert.strictEqual(fr.pagamento_parcial, true);
+  assert.strictEqual(r.overrides.pagamentoForaDoEscopo, 2);        // JÁ PAGO + NÃO PAGAR
+  assert.strictEqual(r.overrides.proximaParcela, 1);               // só o de franquia
+  // parcelas_pagas fica registrado mesmo fora do escopo
+  assert.strictEqual(jp.parcelas_pagas, 2);
+});
+
+teste('Set (compat.) = 1 parcela paga: SETHI com 6 cobertas => segue A PAGAR', () => {
+  const mapa = { segurado: 0, cpf_ccb: 1, parceiro: 2, casos_a_pagar: 3, valor_parcela: 4, data_contratacao: 5, data_evento: 6, data_admissao: 7, motivo_desligamento_codigo: 8 };
+  const linhas = [{ __linha: 2, col0: 'Sethi Set', col1: '008.000.073-62', col2: 'SETHI', col3: 'PAGAR', col4: '900', col5: '2025-01-01', col6: '2025-06-01', col7: '2020-01-01', col8: '2' }];
   const r = transformar(mapa, linhas, { pagamentosConfirmados: new Set(['800007362']) });
-  assert.strictEqual(r.casos[0].categoria_pagamento, 'JA_PAGO');
-  assert.strictEqual(r.casos[0].casos_a_pagar, 0);
+  const c = r.casos.map(aplicarMotor)[0];
+  assert.strictEqual(c.casos_a_pagar, 1);
+  assert.strictEqual(c.parcelas_pagas, 1);
+  assert.strictEqual(c.parcelas_restantes, 5);
 });
 
 teste('pagamento casa por CPF mas o caso tem CCB próprio => NÃO reclassifica (ressalva)', () => {
   const mapa = { segurado: 0, cpf_ccb: 1, parceiro: 2, casos_a_pagar: 3, valor_a_pagar: 4 };
   const linhas = [{ __linha: 2, col0: 'Com CCB', col1: '11122233344 / 5000', col2: 'POUPACRED', col3: 'PAGAR', col4: '1000' }];
   // a tabela tem o CPF, não o CCB 5000
-  const r = transformar(mapa, linhas, { pagamentosConfirmados: new Set(['11122233344']) });
+  const r = transformar(mapa, linhas, { pagamentosConfirmados: new Map([['11122233344', 6]]) });
   assert.strictEqual(r.casos[0].pagamento_confirmado, false);
   assert.strictEqual(r.casos[0].casos_a_pagar, 1);              // segue A PAGAR pela planilha
   assert.strictEqual(r.overrides.casadoPorCpfComRessalva, 1);
@@ -193,9 +230,9 @@ teste('mesmo CPF em 2 empréstimos (CCBs diferentes), CPF na tabela => nenhum re
     { __linha: 2, col0: 'Zé', col1: '99988877766 / 1000', col2: 'SETHI', col3: 'PAGAR', col4: '700' },
     { __linha: 3, col0: 'Zé', col1: '99988877766 / 2000', col2: 'SETHI', col3: 'PAGAR', col4: '900' }
   ];
-  const r = transformar(mapa, linhas, { pagamentosConfirmados: new Set(['99988877766']) });
+  const r = transformar(mapa, linhas, { pagamentosConfirmados: new Map([['99988877766', 3]]) });
   assert.strictEqual(r.casos.length, 2);
-  assert.strictEqual(r.casos.every(c => c.pagamento_confirmado === false), true);
+  assert.strictEqual(r.casos.every(c => c.pagamento_confirmado === false && c.pagamento_parcial === false), true);
   assert.strictEqual(r.overrides.casadoPorCpfComRessalva, 2);
 });
 
@@ -222,23 +259,22 @@ teste('casosManuais: AGUARDANDO_VALOR_MANUAL retém o caso fora de A PAGAR', () 
   assert.strictEqual(r.overrides.aguardandoValorManual, 1);
 });
 
-teste('casosManuais: acao JA_PAGO (casado por CPF, sem CCB) reclassifica como JÁ PAGO', () => {
+teste('casosManuais: acao JA_PAGO (casado por CPF) => JÁ PAGO (completo), independe de parcelas', () => {
   const mapa = { segurado: 0, cpf_ccb: 1, parceiro: 2, casos_a_pagar: 3, valor_a_pagar: 4 };
   const linhas = [{ __linha: 2, col0: 'MICHAEL MADRUGA MARTINS', col1: '023.688.770-02', col2: 'NOVA PROMOTORA', col3: 'PAGAR', col4: '525.12' }];
   const manuais = new Map([['2368877002', { acao: 'JA_PAGO', nota: 'confirmado por nome' }]]);
   const r = transformar(mapa, linhas, { casosManuais: manuais });
   assert.strictEqual(r.casos[0].categoria_pagamento, 'JA_PAGO');
   assert.strictEqual(r.casos[0].casos_a_pagar, 0);
-  assert.strictEqual(r.casos[0].pagamento_confirmado, true);
-  assert.strictEqual(r.casos[0].classificacao_pagamento, 'JÁ PAGO (comprovante)');
-  assert.strictEqual(r.overrides.pagamentoConfirmado, 1);
+  assert.strictEqual(r.casos[0].classificacao_pagamento, 'JÁ PAGO (completo)');
+  assert.strictEqual(r.overrides.jaPagoCompleto, 1);
 });
 
 teste('BLOQUEADO_REEMPREGO vence até o pagamento confirmado', () => {
   const mapa = { segurado: 0, cpf_ccb: 1, parceiro: 2, casos_a_pagar: 3, valor_a_pagar: 4 };
   const linhas = [{ __linha: 2, col0: 'Willian', col1: '008.000.073-62', col2: 'SETHI', col3: 'PAGAR', col4: '281.30' }];
   const manuais = new Map([['800007362', { acao: 'BLOQUEADO_REEMPREGO', nota: 'reemprego' }]]);
-  const r = transformar(mapa, linhas, { casosManuais: manuais, pagamentosConfirmados: new Set(['800007362']) });
+  const r = transformar(mapa, linhas, { casosManuais: manuais, pagamentosConfirmados: new Map([['800007362', 6]]) });
   assert.strictEqual(r.casos[0].categoria_pagamento, 'BLOQUEADO_REEMPREGO');
 });
 

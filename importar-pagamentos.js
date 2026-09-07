@@ -256,7 +256,7 @@ function parceiroDoCaminho(rel) {
 // ----------------------------------------------------------------------------
 // Gravação
 // ----------------------------------------------------------------------------
-const COLS = ['ccb', 'ccb_bruto', 'segurado', 'parceiro', 'valor_pago', 'data_pagamento', 'fonte_arquivo', 'observacao'];
+const COLS = ['ccb', 'ccb_bruto', 'segurado', 'parceiro', 'valor_pago', 'data_pagamento', 'fonte_arquivo', 'lote', 'observacao'];
 const corta = (s, n) => (s == null ? null : String(s).slice(0, n));
 
 async function gravar(registros) {
@@ -271,7 +271,8 @@ async function gravar(registros) {
         `INSERT INTO pagamentos_confirmados (${COLS.join(',')}) VALUES ${lote.map(() => ph).join(',')}`,
         lote.flatMap(r => [
           r.ccb, corta(r.ccb_bruto, 120), corta(r.segurado, 200), corta(r.parceiro, 120),
-          r.valor_pago ?? null, r.data_pagamento || null, corta(r.fonte_arquivo, 255), corta(r.observacao, 255)
+          r.valor_pago ?? null, r.data_pagamento || null, corta(r.fonte_arquivo, 255),
+          corta(r.lote || loteKey(r.fonte_arquivo), 160), corta(r.observacao, 255)
         ])
       );
     }
@@ -353,10 +354,15 @@ async function coletarPagamentos({ entrada, metlife } = {}) {
     }
   }
 
+  // Dedup por (CCB, LOTE). "Lote" = o arquivo lógico de pagamento, ignorando a
+  // pasta e o sufixo de cópia " (5)"/" (6)". Assim o arquivo combinado
+  // METLIFE_SETHI_POUPA que aparece nas pastas SETHI e POUPACRED conta 1x, mas
+  // o MESMO CCB em lotes DIFERENTES (22/06, 27/07, ...) conta CADA um = 1 parcela.
   const vistos = new Set();
   const unicos = [];
   for (const r of registros) {
-    const k = [r.ccb, r.data_pagamento || '', r.valor_pago ?? ''].join('|');
+    r.lote = loteKey(r.fonte_arquivo);
+    const k = r.ccb + '|' + r.lote;
     if (vistos.has(k)) continue;
     vistos.add(k); unicos.push(r);
   }
@@ -365,6 +371,16 @@ async function coletarPagamentos({ entrada, metlife } = {}) {
     unicos, registros, naoLidos, porFonte, recibos,
     limpar: () => { if (tempZip) { try { fs.rmSync(tempZip, { recursive: true, force: true }); } catch (_) {} } }
   };
+}
+
+// nome do "lote": basename sem extensão, sem " (N)" de cópia, sem espaços extras
+function loteKey(fonte) {
+  return String(fonte).split('/').pop()
+    .replace(/\.(xlsx?|csv|pdf)$/i, '')
+    .replace(/\s*\(\d+\)\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
 }
 
 module.exports = { coletarPagamentos, lerPlanilhaPagamentos, lerPdfPagamento, parceiroDaPasta, parceiroDoCaminho };
@@ -384,27 +400,35 @@ if (require.main === module) (async () => {
     L('\n======================================================================');
     L('  IMPORTACAO DE PAGAMENTOS CONFIRMADOS' + (opcoes.dryRun ? '   [DRY-RUN - nada gravado]' : ''));
     L('======================================================================');
+    const parcelasPorCcb = {};
+    for (const r of unicos) parcelasPorCcb[r.ccb] = (parcelasPorCcb[r.ccb] || 0) + 1;
+    const distParc = {};
+    for (const n of Object.values(parcelasPorCcb)) distParc[n] = (distParc[n] || 0) + 1;
+
     L(`  Arquivos lidos ............. ${porFonte.length}`);
-    L(`  Linhas de pagamento ....... ${unicos.length}${unicos.length !== registros.length ? `  (${registros.length - unicos.length} duplicatas exatas removidas)` : ''}`);
+    L(`  Parcelas pagas (1 por CCB por lote) ... ${unicos.length}${unicos.length !== registros.length ? `  (${registros.length - unicos.length} cópias do mesmo lote removidas)` : ''}`);
+    L(`  CCBs distintos ................ ${Object.keys(parcelasPorCcb).length}`);
+    L(`  Parcelas por CCB: ` + Object.entries(distParc).sort((a, b) => a[0] - b[0]).map(([k, v]) => `${k}x=${v}`).join('  '));
     L(`  Arquivos NAO lidos ........ ${naoLidos.length}`);
 
     const porParc = {};
     for (const r of unicos) {
       const p = r.parceiro || '(individual / sem parceiro)';
-      (porParc[p] = porParc[p] || { ccbs: new Set(), soma: 0, semValor: 0 });
+      (porParc[p] = porParc[p] || { ccbs: new Set(), parcelas: 0, soma: 0, semValor: 0 });
       porParc[p].ccbs.add(r.ccb);
+      porParc[p].parcelas++;
       if (r.valor_pago == null) porParc[p].semValor++;
       else porParc[p].soma += Number(r.valor_pago);
     }
     L('\n  ---------- PAGAMENTOS por PARCEIRO ----------');
-    L('    parceiro                         CCBs distintos     soma paga   (linhas sem valor)');
-    let totCcb = 0, totSoma = 0;
+    L('    parceiro                       CCBs   parcelas     soma paga   (sem valor)');
+    let totCcb = 0, totParc = 0, totSoma = 0;
     for (const [p, o] of Object.entries(porParc).sort((a, b) => b[1].soma - a[1].soma)) {
-      totCcb += o.ccbs.size; totSoma += o.soma;
-      L(`    ${p.padEnd(32)} ${String(o.ccbs.size).padStart(10)}   ${brl(o.soma).padStart(14)}   ${o.semValor ? '(' + o.semValor + ')' : ''}`);
+      totCcb += o.ccbs.size; totParc += o.parcelas; totSoma += o.soma;
+      L(`    ${p.padEnd(30)} ${String(o.ccbs.size).padStart(5)} ${String(o.parcelas).padStart(8)}   ${brl(o.soma).padStart(14)}   ${o.semValor ? '(' + o.semValor + ')' : ''}`);
     }
-    L(`    ${'-'.repeat(32)} ${'-'.repeat(10)}   ${'-'.repeat(14)}`);
-    L(`    ${'TOTAL'.padEnd(32)} ${String(totCcb).padStart(10)}   ${brl(totSoma).padStart(14)}`);
+    L(`    ${'-'.repeat(30)} ${'-'.repeat(5)} ${'-'.repeat(8)}   ${'-'.repeat(14)}`);
+    L(`    ${'TOTAL'.padEnd(30)} ${String(totCcb).padStart(5)} ${String(totParc).padStart(8)}   ${brl(totSoma).padStart(14)}`);
 
     L('\n  ---------- por ARQUIVO (linhas com CCB extraidas) ----------');
     for (const f of porFonte) L(`    ${String(f.n).padStart(4)} linha(s)  [${(f.parceiro || '—')}]  ${f.fonte}   (${f.cols})`);

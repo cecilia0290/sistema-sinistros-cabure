@@ -86,8 +86,16 @@ CREATE TABLE IF NOT EXISTS casos (
   data_programada         DATE NULL,                          -- data após "PROGRAMADO PARA PAGAMENTO ..." (conferir manualmente)
   status_planilha         VARCHAR(80) NULL,                   -- coluna STATUS — ETIQUETA, não decide pagamento
   classificacao_pagamento VARCHAR(60) NULL,                   -- categoria derivada da coluna CASOS A PAGAR
+  observacao_pagamento    VARCHAR(255) NULL,                  -- nota de override manual (config-pagamento.casosManuais)
   valor_a_pagar_planilha  DECIMAL(12,2) NULL,                 -- coluna "Valor a Pagar"
   casos_a_pagar           TINYINT(1) NOT NULL DEFAULT 0,      -- CASOS A PAGAR classificado como "A PAGAR" (prefixo) — É ELE QUE DECIDE
+
+  -- Conciliação parcela a parcela com `pagamentos_confirmados`.
+  -- parcelas_pagas   = nº de aparições do CCB nos arquivos de pagamento (1 por lote).
+  -- parcelas_restantes = parcelas_cobertas (catálogo) - parcelas_pagas (>= 0).
+  -- Se restantes > 0 o caso segue "A PAGAR" (próxima parcela); se 0, "JÁ PAGO (completo)".
+  parcelas_pagas          INT NULL,
+  parcelas_restantes      INT NULL,
 
   -- Valor único que o Dashboard, a página "Pagar agora" e os 4 gráficos usam.
   -- COALESCE(valor_a_pagar_planilha, valor_total_a_pagar, valor_a_pagar) — uma
@@ -166,6 +174,7 @@ CREATE TABLE IF NOT EXISTS pagamentos_confirmados (
   valor_pago     DECIMAL(12,2) NULL,
   data_pagamento DATE NULL,
   fonte_arquivo  VARCHAR(255) NOT NULL,                 -- caminho do arquivo dentro do zip, ou "MetLife: <arquivo>"
+  lote           VARCHAR(160) NULL,                     -- nome lógico do lote (arquivo sem pasta/sufixo). 1 linha por (ccb, lote) = 1 parcela paga.
   observacao     VARCHAR(255) NULL,
   criado_em      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   KEY idx_pgto_ccb       (ccb),

@@ -55,7 +55,7 @@
             <thead>
               <tr>
                 <th>ID</th><th>Segurado</th><th>CPF/CCB</th><th>Parceiro</th><th>Fundo</th><th>CIA</th>
-                <th class="col-num">Parc.</th><th class="col-num">Valor / parcela</th><th class="col-num">Total a pagar</th>
+                <th class="col-num">Parc. pg/rest</th><th class="col-num">Valor / parcela</th><th class="col-num">A pagar agora</th>
               </tr>
             </thead>
             <tbody id="tabela-pagar"></tbody>
@@ -83,7 +83,7 @@
           <td>${caso.parceiro || '—'}</td>
           <td>${caso.fundo || '—'}</td>
           <td>${caso.cia || '—'}</td>
-          <td class="col-num col-mono">${caso.numero_parcelas_cobertas_produto ?? '—'}</td>
+          <td class="col-num col-mono">${(caso.parcelas_pagas ?? 0)}/${caso.parcelas_restantes ?? (caso.numero_parcelas_cobertas_produto ?? '—')}</td>
           <td class="col-num col-mono">${caso.valor_a_pagar != null ? fmtBRL(caso.valor_a_pagar) : '—'}</td>
           <td class="col-num col-mono col-valor">${fmtBRL(caso.valor_a_pagar_final)}</td>
         </tr>

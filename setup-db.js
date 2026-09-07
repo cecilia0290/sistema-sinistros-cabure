@@ -57,6 +57,10 @@ const mysql = require('mysql2/promise');
     await garantirColuna('casos', 'teto_planilha', 'teto_planilha DECIMAL(12,2) NULL AFTER numero_parcelas_cobertas_produto');
     await garantirColuna('casos', 'parcelas_planilha', 'parcelas_planilha INT NULL AFTER teto_planilha');
     await garantirColuna('casos', 'divergencia_produto', 'divergencia_produto VARCHAR(255) NULL AFTER parcelas_planilha');
+    await garantirColuna('casos', 'parcelas_pagas', 'parcelas_pagas INT NULL AFTER casos_a_pagar');
+    await garantirColuna('casos', 'parcelas_restantes', 'parcelas_restantes INT NULL AFTER parcelas_pagas');
+    await garantirColuna('casos', 'observacao_pagamento', 'observacao_pagamento VARCHAR(255) NULL AFTER classificacao_pagamento');
+    await garantirColuna('pagamentos_confirmados', 'lote', 'lote VARCHAR(160) NULL AFTER fonte_arquivo');
     await garantirColuna('extracoes_ia', 'confianca_json', 'confianca_json JSON NULL');
     await garantirColuna('extracoes_ia', 'fonte', 'fonte VARCHAR(200) NULL');
     // Colunas que podem ter sido criadas mais estreitas numa versão anterior — alarga.

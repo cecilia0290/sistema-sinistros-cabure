@@ -28,9 +28,18 @@ function transformar(mapa, linhas, opcoes = {}) {
   const avisos = [];
   const liberarTodos = !!opcoes.liberarProgramadosTodos;
   const liberados = opcoes.liberadosChaves instanceof Set ? opcoes.liberadosChaves : new Set();
-  const pagamentosConfirmados = opcoes.pagamentosConfirmados instanceof Set ? opcoes.pagamentosConfirmados : new Set();
+  // pagamentosConfirmados: Map<ccbNormalizado, nº de parcelas pagas>. Aceita também
+  // um Set (compat.) — nesse caso cada CCB conta como 1 parcela paga.
+  const pagCru = opcoes.pagamentosConfirmados;
+  const parcelasPagasDe = (k) => {
+    if (!k) return 0;
+    if (pagCru instanceof Map) return pagCru.get(k) || 0;
+    if (pagCru instanceof Set) return pagCru.has(k) ? 1 : 0;
+    return 0;
+  };
   const casosManuais = opcoes.casosManuais instanceof Map ? opcoes.casosManuais : new Map();
   let nPagamentoConfirmado = 0, nBloqueado = 0, nAguardandoValor = 0, nResgatadosDeAPagar = 0;
+  let nProximaParcela = 0, nJaPagoCompleto = 0, nPagamentoForaDoEscopo = 0;
   const get = (linha, campo) => (mapa[campo] === undefined ? null : linha['col' + mapa[campo]]);
   const txt = v => (P.vazio(v) ? null : String(v).trim().replace(/\s+/g, ' '));
 
@@ -167,57 +176,103 @@ function transformar(mapa, linhas, opcoes = {}) {
     // Categoria que a PLANILHA (coluna CASOS A PAGAR) daria, sem nenhum override.
     const catPlanilha = categoriaDoCaso(regs);
 
-    // Como o CCB do caso casou com pagamentos_confirmados:
+    // Parceiro / fundo do caso (a correção de FUNDO vem de config-pagamento.js).
+    const parceiroBrutoCaso = primeiro(regs, 'parceiroBruto');
+    const fundoCorrigidoInfo = opcoes.fundoCorrigido instanceof Map
+      ? [...digitosGrupo].map(d => opcoes.fundoCorrigido.get(d)).find(Boolean)
+      : null;
+    if (fundoCorrigidoInfo) {
+      avisos.push(`"${rotulo}": FUNDO corrigido manualmente de "${primeiro(regs, 'fundo') || '(vazio)'}" para "${fundoCorrigidoInfo.fundo}" — ${fundoCorrigidoInfo.nota}.`);
+    }
+    const fundoCaso = fundoCorrigidoInfo ? fundoCorrigidoInfo.fundo : primeiro(regs, 'fundo');
+
+    // Parcelas COBERTAS pelo produto (catálogo). Fallback: coluna AQ da planilha.
+    const prodCaso = produtoDoParceiro(parceiroBrutoCaso, fundoCaso);
+    let parcelasCobertas = prodCaso && prodCaso.parcelasCobertas != null ? Number(prodCaso.parcelasCobertas) : null;
+    if (parcelasCobertas == null) {
+      const pl = primeiro(regs, 'parcelasPlanilha');
+      if (pl != null && Number.isFinite(Number(pl))) parcelasCobertas = Number(pl);
+    }
+
+    // Como o CCB do caso casou com pagamentos_confirmados, e QUANTAS parcelas:
     //   - por CCB  -> casamento forte (mesmo empréstimo)
     //   - por CPF  -> só vale quando o caso NÃO tem CCB próprio (ex.: SETHI, cujo
-    //                 "CPF" é o nº do contrato) E esse CPF tem 1 caso só. Se a
-    //                 pessoa tem CCB próprio ou vários empréstimos, casar por CPF
-    //                 poderia atribuir o pagamento ao caso errado -> NÃO reclassifica,
-    //                 deixa a planilha decidir e gera aviso p/ conferência.
+    //                 "CPF" é o nº do contrato) E esse CPF tem 1 caso só.
     const ccbsGrupo = [...new Set(regs.flatMap(r => r._ccbs || []))];
     const cpfsGrupo = [...new Set(regs.map(r => r._cpf).filter(Boolean))];
-    const matchPorCcb = ccbsGrupo.map(normalizarCcb).some(k => k && pagamentosConfirmados.has(k));
-    const matchPorCpf = cpfsGrupo.map(normalizarCcb).some(k => k && pagamentosConfirmados.has(k));
+    const parcViaCcb = Math.max(0, ...ccbsGrupo.map(c => parcelasPagasDe(normalizarCcb(c))));
+    const parcViaCpf = Math.max(0, ...cpfsGrupo.map(c => parcelasPagasDe(normalizarCcb(c))));
+    const matchPorCcb = parcViaCcb > 0;
+    const matchPorCpf = parcViaCpf > 0;
     const cpfAmbiguo = cpfsGrupo.some(c => (gruposPorCpf.get(c) || new Set()).size > 1);
     const pagamentoNaTabela = matchPorCcb || (matchPorCpf && ccbsGrupo.length === 0 && !cpfAmbiguo);
-    const casadoPorCpfComRessalva = !pagamentoNaTabela && matchPorCpf; // casou por CPF, mas com CCB próprio ou CPF em vários casos
+    const casadoPorCpfComRessalva = !pagamentoNaTabela && matchPorCpf;
+    const parcelasPagas = pagamentoNaTabela ? (matchPorCcb ? parcViaCcb : parcViaCpf) : 0;
+    // restantes: só dá pra saber se conhecemos as parcelas cobertas
+    const parcelasRestantes = parcelasCobertas != null ? Math.max(0, parcelasCobertas - parcelasPagas) : null;
+
+    // ESCOPO: um comprovante só reclassifica o caso quando a coluna CASOS A PAGAR
+    // da planilha já o considerava pagável ou em franquia. JÁ PAGO / PENDENTE /
+    // NÃO PAGAR mantêm o que a planilha diz (só geram aviso). Decisão da operação.
+    const planilhaPermiteOverride = ESCOPO_OVERRIDE_PAGAMENTO.has(catPlanilha);
 
     // ----- OVERRIDES DO CASO — vêm ANTES da coluna CASOS A PAGAR -----
-    //  1) BLOQUEADO_REEMPREGO (config manual)     -> sai da operação
-    //  2) pagamento confirmado (comprovante real) -> JÁ PAGO, ignora a planilha
-    //  3) AGUARDANDO_VALOR_MANUAL (config manual) -> retido até preencher o valor
+    //  1) BLOQUEADO_REEMPREGO (config manual)      -> sai da operação
+    //  2) JA_PAGO manual (config)                  -> JÁ PAGO (completo), decisão humana
+    //  3) pagamento na tabela + planilha no escopo:
+    //       parcelas_pagas >= cobertas            -> JÁ PAGO (completo)
+    //       parcelas_pagas <  cobertas (ou desc.) -> segue A PAGAR (próxima parcela)
+    //  4) AGUARDANDO_VALOR_MANUAL (config manual)  -> retido até preencher o valor
     let override = null;
     let confirmadoPorTabela = false;
     if (infoManual && infoManual.acao === 'BLOQUEADO_REEMPREGO') override = 'BLOQUEADO_REEMPREGO';
-    else if (infoManual && infoManual.acao === 'JA_PAGO') override = 'JA_PAGO_CONFIRMADO';
-    else if (pagamentoNaTabela) { override = 'JA_PAGO_CONFIRMADO'; confirmadoPorTabela = true; }
+    else if (infoManual && infoManual.acao === 'JA_PAGO') override = 'JA_PAGO_COMPLETO';
+    else if (pagamentoNaTabela && planilhaPermiteOverride) {
+      confirmadoPorTabela = true;
+      override = (parcelasRestantes != null && parcelasRestantes <= 0) ? 'JA_PAGO_COMPLETO' : 'PROXIMA_PARCELA';
+    }
     else if (infoManual && infoManual.acao === 'AGUARDANDO_VALOR_MANUAL') override = 'AGUARDANDO_VALOR_MANUAL';
 
     if (casadoPorCpfComRessalva && !override) {
       nCasadoPorCpfComRessalva++;
-      avisos.push(`"${rotulo}": um pagamento bate com o CPF, mas o caso tem CCB próprio (${ccbsGrupo.join(', ')}) ou o CPF aparece em mais de um empréstimo — NÃO reclassifiquei como JÁ PAGO. Confira e, se for o caso, adicione o CCB certo em pagamentos_confirmados.`);
+      avisos.push(`"${rotulo}": um pagamento bate com o CPF, mas o caso tem CCB próprio (${ccbsGrupo.join(', ')}) ou o CPF aparece em mais de um empréstimo — NÃO reclassifiquei. Confira e adicione o CCB certo em pagamentos_confirmados.`);
+    }
+    const pagamentoForaDoEscopo = pagamentoNaTabela && !planilhaPermiteOverride && !override;
+    if (pagamentoForaDoEscopo) {
+      nPagamentoForaDoEscopo++;
+      avisos.push(`"${rotulo}": ${parcelasPagas} parcela(s) em pagamentos_confirmados, mas a planilha classifica como "${P.CATEGORIA_ROTULO[catPlanilha] || catPlanilha}" — mantido como está (fora do escopo A PAGAR/PROGRAMADO/FRANQUIA). Confira manualmente.`);
     }
 
     let catCaso;
     let programadoLiberado = false;
-    const pagamentoConfirmado = override === 'JA_PAGO_CONFIRMADO';
+    const jaPagoCompleto = override === 'JA_PAGO_COMPLETO';
+    const proximaParcela = override === 'PROXIMA_PARCELA';
+    const pagamentoConfirmado = jaPagoCompleto && confirmadoPorTabela;
     const bloqueado = override === 'BLOQUEADO_REEMPREGO';
     const aguardandoValorManual = override === 'AGUARDANDO_VALOR_MANUAL';
 
-    if (override) {
-      catCaso = pagamentoConfirmado ? 'JA_PAGO' : override;
-      if (pagamentoConfirmado) {
-        nPagamentoConfirmado++;
-        if (catPlanilha === 'A_PAGAR' || catPlanilha === 'PROGRAMADO') nResgatadosDeAPagar++;
-        const via = confirmadoPorTabela ? 'comprovante' : 'config-pagamento.js (' + (infoManual && infoManual.nota ? infoManual.nota : 'manual') + ')';
-        avisos.push(`"${rotulo}": pagamento CONFIRMADO via ${via} — reclassificado como JÁ PAGO (a planilha dizia "${P.CATEGORIA_ROTULO[catPlanilha] || catPlanilha}").`);
-      } else if (bloqueado) {
-        nBloqueado++;
-        avisos.push(`"${rotulo}": BLOQUEADO - REEMPREGO (config-pagamento.js) — fora de cobertura, não entra em A PAGAR nem em JÁ PAGO.`);
-      } else {
-        nAguardandoValor++;
-        avisos.push(`"${rotulo}": AGUARDANDO VALOR MANUAL — avulso pronto p/ pagamento, falta preencher o valor certo (era R$ 0,00 na planilha).`);
-      }
+    if (jaPagoCompleto) {
+      catCaso = 'JA_PAGO';
+      nJaPagoCompleto++;
+      if (confirmadoPorTabela) nPagamentoConfirmado++;
+      if (catPlanilha === 'A_PAGAR' || catPlanilha === 'PROGRAMADO') nResgatadosDeAPagar++;
+      const via = confirmadoPorTabela
+        ? `comprovante (${parcelasPagas}/${parcelasCobertas ?? '?'} parcelas)`
+        : 'config-pagamento.js (' + (infoManual && infoManual.nota ? infoManual.nota : 'manual') + ')';
+      avisos.push(`"${rotulo}": JÁ PAGO (completo) via ${via} — a planilha dizia "${P.CATEGORIA_ROTULO[catPlanilha] || catPlanilha}".`);
+    } else if (proximaParcela) {
+      catCaso = 'A_PAGAR';                 // SEGUE a pagar: falta(m) parcela(s)
+      nProximaParcela++;
+      const falta = parcelasRestantes != null ? `${parcelasRestantes} parcela(s) restante(s)` : 'parcelas cobertas do produto desconhecidas';
+      avisos.push(`"${rotulo}": ${parcelasPagas} parcela(s) paga(s) de ${parcelasCobertas ?? '?'} — SEGUE A PAGAR (${falta}).`);
+    } else if (bloqueado) {
+      catCaso = 'BLOQUEADO_REEMPREGO';
+      nBloqueado++;
+      avisos.push(`"${rotulo}": BLOQUEADO - REEMPREGO (config-pagamento.js) — fora de cobertura.`);
+    } else if (aguardandoValorManual) {
+      catCaso = 'AGUARDANDO_VALOR_MANUAL';
+      nAguardandoValor++;
+      avisos.push(`"${rotulo}": AGUARDANDO VALOR MANUAL — avulso pronto p/ pagamento, falta preencher o valor certo.`);
     } else {
       catCaso = catPlanilha;
       if (catCaso === 'PROGRAMADO') {
@@ -229,20 +284,7 @@ function transformar(mapa, linhas, opcoes = {}) {
       }
     }
 
-    // Se pagaria (A_PAGAR) mas o parceiro não está no catálogo (X 3, "NAO CADASTRADO",
-    // "1573", vazio…): NÃO entra automático — fica para confirmação manual da regra.
-    const parceiroBrutoCaso = primeiro(regs, 'parceiroBruto');
-
-    // Correção manual de FUNDO com erro de digitação confirmado (config-pagamento.js).
-    const fundoCorrigidoInfo = opcoes.fundoCorrigido instanceof Map
-      ? [...digitosGrupo].map(d => opcoes.fundoCorrigido.get(d)).find(Boolean)
-      : null;
-    if (fundoCorrigidoInfo) {
-      avisos.push(`"${rotulo}": FUNDO corrigido manualmente de "${primeiro(regs, 'fundo') || '(vazio)'}" para "${fundoCorrigidoInfo.fundo}" — ${fundoCorrigidoInfo.nota}.`);
-    }
-    const fundoCaso = fundoCorrigidoInfo ? fundoCorrigidoInfo.fundo : primeiro(regs, 'fundo');
-
-    if (catCaso === 'A_PAGAR') {
+    if (catCaso === 'A_PAGAR' && !proximaParcela) {
       const prodChk = produtoDoParceiro(parceiroBrutoCaso, fundoCaso);
       if (!prodChk.noCatalogo) {
         catCaso = 'PARCEIRO_NAO_IDENTIFICADO';
@@ -291,12 +333,18 @@ function transformar(mapa, linhas, opcoes = {}) {
       categoria_pagamento: catCaso,
       categoria_pagamento_planilha: catPlanilha,
       programado_liberado: programadoLiberado,
-      pagamento_confirmado: pagamentoConfirmado,
+      pagamento_confirmado: pagamentoConfirmado,        // true só quando JÁ PAGO (completo) por comprovante
+      pagamento_parcial: proximaParcela,                // achou pagamento, mas falta(m) parcela(s) — SEGUE A PAGAR
+      pagamento_fora_do_escopo: pagamentoForaDoEscopo,  // achou pagamento, mas planilha = JÁ PAGO/PENDENTE/NÃO PAGAR
       bloqueado_reemprego: bloqueado,
       aguardando_valor_manual: aguardandoValorManual,
+      parcelas_cobertas_produto: parcelasCobertas,
+      parcelas_pagas: parcelasPagas,
+      parcelas_restantes: parcelasRestantes,
       override_nota: (override && infoManual) ? (infoManual.nota || null) : null,
       classificacao_pagamento:
-          pagamentoConfirmado ? P.CATEGORIA_ROTULO.JA_PAGO_CONFIRMADO
+          jaPagoCompleto ? P.CATEGORIA_ROTULO.JA_PAGO_COMPLETO
+        : proximaParcela ? (P.CATEGORIA_ROTULO.A_PAGAR_PROXIMA_PARCELA + (parcelasCobertas != null ? ` (${parcelasPagas}/${parcelasCobertas})` : ''))
         : bloqueado ? P.CATEGORIA_ROTULO.BLOQUEADO_REEMPREGO
         : aguardandoValorManual ? P.CATEGORIA_ROTULO.AGUARDANDO_VALOR_MANUAL
         : programadoLiberado ? 'A PAGAR (ex-PROGRAMADO)'
@@ -310,7 +358,10 @@ function transformar(mapa, linhas, opcoes = {}) {
     casos, avisos, categorias,
     totalLinhas: linhas.length, ignoradas: semChave.length,
     overrides: {
-      pagamentoConfirmado: nPagamentoConfirmado,
+      jaPagoCompleto: nJaPagoCompleto,
+      proximaParcela: nProximaParcela,
+      pagamentoForaDoEscopo: nPagamentoForaDoEscopo, // tem comprovante mas planilha = JÁ PAGO/PENDENTE/NÃO PAGAR
+      pagamentoConfirmado: nPagamentoConfirmado,     // mantido p/ compat.: = nJaPagoCompleto por comprovante
       resgatadosDeAPagar: nResgatadosDeAPagar,
       bloqueadoReemprego: nBloqueado,
       aguardandoValorManual: nAguardandoValor,
@@ -318,6 +369,11 @@ function transformar(mapa, linhas, opcoes = {}) {
     }
   };
 }
+
+// Categorias da coluna CASOS A PAGAR em que um comprovante de pagamento PODE
+// reclassificar o caso (para "próxima parcela" ou "JÁ PAGO completo"). Fora daqui
+// (JÁ PAGO / PENDENTE / NÃO PAGAR) o comprovante só gera aviso.
+const ESCOPO_OVERRIDE_PAGAMENTO = new Set(['A_PAGAR', 'PROGRAMADO', 'AGUARDANDO_FRANQUIA']);
 
 // Categoria final do CASO a partir das suas linhas. Prioridade: PROGRAMADO acima
 // de tudo (para nunca virar "a pagar" sem conferência), depois A_PAGAR, etc.
@@ -382,6 +438,16 @@ function aplicarMotor(caso) {
   caso.valor_a_pagar_final =
     (caso.valor_a_pagar_planilha !== null && caso.valor_a_pagar_planilha !== undefined) ? caso.valor_a_pagar_planilha
     : (r.valorTotalAPagar !== null ? r.valorTotalAPagar : r.valorAPagar);
+
+  // Caso com pagamento parcial: o que falta pagar é a PRÓXIMA parcela (1 só),
+  // no valor de sempre limitado pelo teto do catálogo — nunca o total.
+  if (caso.pagamento_parcial) {
+    let base = (r.valorAPagar != null) ? r.valorAPagar
+             : (caso.valor_a_pagar_planilha != null) ? Number(caso.valor_a_pagar_planilha)
+             : (r.valorTotalAPagar != null && caso.parcelas_cobertas_produto ? r.valorTotalAPagar / caso.parcelas_cobertas_produto : null);
+    if (base != null && r.tetoParcelaProduto != null) base = Math.min(Number(base), Number(r.tetoParcelaProduto));
+    caso.valor_a_pagar_final = base != null ? Math.round(base * 100) / 100 : caso.valor_a_pagar_final;
+  }
   return caso;
 }
 

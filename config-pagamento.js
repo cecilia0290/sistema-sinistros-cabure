@@ -59,6 +59,28 @@ module.exports = {
       acao: 'JA_PAGO',
       nota: 'confirmado por nome no arquivo BASE PARA ANALISE (sem CCB no comprovante) - CCB a confirmar depois',
       por: 'Cecília', em: '2026-09-07'
+    },
+
+    // "NEGADO" pela regra interna da Caburé (carência / risco excluído), mas o
+    // lote MetLife pagou assim mesmo — negativa revertida. O status no sistema
+    // deve refletir a realidade (pago), não "negado". Não entram no total A PAGAR.
+    {
+      cpf: '08000127343', segurado: 'DIEGO FELIPE BARROS WANDERLEY', parceiro: 'SETHI',
+      acao: 'JA_PAGO',
+      nota: 'negado pela regra interna (carência < 31 dias), revertido e pago pelo lote MetLife 05/08/2026',
+      por: 'Cecília', em: '2026-09-07'
+    },
+    {
+      cpf: '08000145436', segurado: 'MATHEUS SOARES BUCKINGHAM GOMES', parceiro: 'SETHI',
+      acao: 'JA_PAGO',
+      nota: 'negado pela regra interna (carência < 31 dias), revertido e pago pelo lote MetLife 05/08/2026 (caso conhecido de negativa revertida)',
+      por: 'Cecília', em: '2026-09-07'
+    },
+    {
+      ccb: '87784252', segurado: 'ITUR MAGNO DA SILVA AMARAL', parceiro: 'POUPACRED',
+      acao: 'JA_PAGO',
+      nota: 'negado pela regra interna (risco excluído - já trabalhando em outro emprego), revertido e pago pelo lote MetLife 06/08/2026',
+      por: 'Cecília', em: '2026-09-07'
     }
   ],
 

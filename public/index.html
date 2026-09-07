@@ -49,7 +49,8 @@
           <label>Pagamento
             <select id="filtro-classif">
               <option value="">Todos</option>
-              <option value="PAGO">Já pago (planilha + comprovante)</option>
+              <option value="PAGO">Já pago (planilha + completo)</option>
+              <option value="PROXIMA">A pagar — próxima parcela</option>
             </select>
           </label>
           <label>Parceiro
@@ -119,6 +120,8 @@
       { chave: 'valor_a_pagar_final', rotulo: 'Valor a pagar', tipo: 'moeda' },
       { chave: 'status', rotulo: 'Status', tipo: 'status', fixa: true },
       { chave: 'classificacao_pagamento', rotulo: 'Classif. pagamento', tipo: 'texto' },
+      { chave: 'parcelas_pagas', rotulo: 'Parc. pagas', tipo: 'numero' },
+      { chave: 'parcelas_restantes', rotulo: 'Parc. restantes', tipo: 'numero' },
       { chave: 'motivo', rotulo: 'Motivo (negado / conferência)', tipo: 'motivo' }
     ];
     const COLUNAS_PADRAO_VISIVEIS = ['id', 'segurado', 'cpf_ccb', 'parceiro', 'cobertura', 'data_evento', 'valor_a_pagar_final', 'status'];
@@ -231,11 +234,12 @@
     });
 
     // --- Filtros, busca, ordenação, paginação (tudo client-side, sobre os casos já carregados) ---
-    // "PAGO" no filtro de pagamento = qualquer "JÁ PAGO*" (planilha ou comprovante).
+    // "PAGO" no filtro de pagamento = qualquer "JÁ PAGO*" (planilha ou comprovante/completo).
     function casoBatePagamento(caso, classif) {
       if (!classif) return true;
       const v = caso.classificacao_pagamento || '';
-      if (classif === 'PAGO') return v === 'JÁ PAGO' || v === 'JÁ PAGO (comprovante)';
+      if (classif === 'PAGO') return v === 'JÁ PAGO' || v === 'JÁ PAGO (completo)' || v === 'JÁ PAGO (comprovante)';
+      if (classif === 'PROXIMA') return v.indexOf('próxima parcela') !== -1;
       return v === classif;
     }
 
@@ -311,7 +315,8 @@
       const selecionado = sel.value;
       const unicos = [...new Set(casosTodos.map(c => c.classificacao_pagamento).filter(Boolean))].sort();
       sel.innerHTML = '<option value="">Todos</option>'
-        + '<option value="PAGO">Já pago (planilha + comprovante)</option>'
+        + '<option value="PAGO">Já pago (planilha + completo)</option>'
+        + '<option value="PROXIMA">A pagar — próxima parcela</option>'
         + unicos.map(p => `<option value="${p}">${p}</option>`).join('');
       sel.value = selecionado;
     }

@@ -127,11 +127,17 @@
         franBloco = itemAnalise('pendente', 'Franquia', 'Aguardando data do evento para calcular.');
       }
 
-      // --- Parcelas (visão simplificada — ver aviso) ---
-      const numParcelas = caso.numero_parcelas_cobertas_produto || 0;
+      // --- Parcelas: conciliadas com pagamentos_confirmados ---
+      // pagamento_parcial não é coluna do banco: deriva da classificação.
+      caso.pagamento_parcial = /próxima parcela/.test(caso.classificacao_pagamento || '');
+      const numParcelas = caso.numero_parcelas_cobertas_produto || caso.parcelas_cobertas_produto || 0;
+      const pagas = Number(caso.parcelas_pagas) || 0;
+      const restantes = caso.parcelas_restantes != null ? Number(caso.parcelas_restantes) : (numParcelas ? Math.max(0, numParcelas - pagas) : null);
       let linhasParcelas = '';
       for (let i = 1; i <= numParcelas; i++) {
-        linhasParcelas += `<tr><td>${i}ª parcela</td><td class="col-mono">${fmtMoeda(caso.valor_a_pagar)}</td><td><span class="badge badge-neutro">Pendente</span></td></tr>`;
+        const paga = i <= pagas;
+        linhasParcelas += `<tr><td>${i}ª parcela</td><td class="col-mono">${fmtMoeda(caso.valor_a_pagar)}</td>` +
+          `<td><span class="badge ${paga ? 'badge-sucesso' : 'badge-neutro'}">${paga ? 'Paga (comprovante)' : 'Pendente'}</span></td></tr>`;
       }
 
       document.getElementById('conteudo-pagina').innerHTML = `
@@ -158,7 +164,9 @@
             <div class="resumo-item"><div class="rotulo">Parcelas cobertas</div><div class="valor">${caso.numero_parcelas_cobertas_produto ?? '—'}</div></div>
             <div class="resumo-item"><div class="rotulo">Data do evento</div><div class="valor">${fmtData(caso.data_evento)}</div></div>
             <div class="resumo-item"><div class="rotulo">Valor por parcela</div><div class="valor">${fmtMoeda(caso.valor_a_pagar)}</div></div>
-            <div class="resumo-item"><div class="rotulo">Total a pagar</div><div class="valor destaque">${fmtMoeda(caso.valor_a_pagar_final ?? caso.valor_total_a_pagar ?? caso.valor_a_pagar)}</div></div>
+            <div class="resumo-item"><div class="rotulo">${caso.pagamento_parcial ? 'Próxima parcela a pagar' : 'Total a pagar'}</div><div class="valor destaque">${fmtMoeda(caso.valor_a_pagar_final ?? caso.valor_total_a_pagar ?? caso.valor_a_pagar)}</div></div>
+            <div class="resumo-item"><div class="rotulo">Parcelas pagas / restantes</div><div class="valor">${(caso.parcelas_pagas ?? 0)} / ${caso.parcelas_restantes ?? '—'}</div></div>
+            <div class="resumo-item"><div class="rotulo">Classificação de pagamento</div><div class="valor" style="font-family:'Inter',sans-serif; font-weight:500; font-size:13px;">${caso.classificacao_pagamento || '—'}${caso.observacao_pagamento ? '<div style="font-weight:400; font-size:12px; color:var(--text-faint); margin-top:2px;">' + caso.observacao_pagamento + '</div>' : ''}</div></div>
             <div class="resumo-item"><div class="rotulo">Marcado “a pagar” (planilha)</div><div class="valor"><span class="badge ${Number(caso.casos_a_pagar) ? 'badge-sucesso' : 'badge-neutro'}">${Number(caso.casos_a_pagar) ? 'SIM' : 'NÃO'}</span></div></div>
           </div>
           ${caso.status_planilha ? '<div class="aviso-caixa">Etiqueta de STATUS na planilha: <strong>' + caso.status_planilha + '</strong> — usada só como referência; quem decide o pagamento é a coluna CASOS A PAGAR.</div>' : ''}
@@ -211,7 +219,9 @@
                 <tbody>${linhasParcelas}</tbody>
               </table>
             </div>
-            <div class="aviso-caixa">O controle de pagamento parcela a parcela ainda não foi implementado — hoje o sistema calcula o valor total a pagar, mas o registro de qual parcela já foi paga é manual. Isso pode ser adicionado em uma próxima etapa.</div>
+            <div class="aviso-caixa">${pagas > 0
+              ? `${pagas} parcela(s) confirmada(s) em <code>pagamentos_confirmados</code> (1 por lote de pagamento). ${restantes > 0 ? 'Falta(m) ' + restantes + ' — por isso o caso segue A PAGAR, no valor de 1 parcela.' : 'Todas as parcelas cobertas foram pagas — caso encerrado.'}`
+              : 'Nenhuma parcela conciliada com <code>pagamentos_confirmados</code> ainda.'}</div>
           </div>
         ` : ''}
 

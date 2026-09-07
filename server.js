@@ -618,10 +618,14 @@ app.get('/api/dashboard', async (req, res) => {
     // partir da planilha (JÁ PAGO) e da tabela pagamentos_confirmados
     // (JÁ PAGO (comprovante)). Contamos os dois juntos.
     const [[{ n: pagos }]] = await pool.query(
-      "SELECT COUNT(*) AS n FROM casos WHERE classificacao_pagamento IN ('JÁ PAGO', 'JÁ PAGO (comprovante)')"
+      "SELECT COUNT(*) AS n FROM casos WHERE classificacao_pagamento IN ('JÁ PAGO', 'JÁ PAGO (completo)', 'JÁ PAGO (comprovante)')"
     );
     const [[{ n: pagosComprovante }]] = await pool.query(
-      "SELECT COUNT(*) AS n FROM casos WHERE classificacao_pagamento = 'JÁ PAGO (comprovante)'"
+      "SELECT COUNT(*) AS n FROM casos WHERE classificacao_pagamento IN ('JÁ PAGO (completo)', 'JÁ PAGO (comprovante)')"
+    );
+    // casos que seguem A PAGAR só porque falta(m) parcela(s) após pagamentos confirmados
+    const [[{ n: proximaParcela }]] = await pool.query(
+      "SELECT COUNT(*) AS n FROM casos WHERE classificacao_pagamento LIKE 'A PAGAR — próxima parcela%'"
     );
     const [[{ n: cancelados }]] = await pool.query(
       "SELECT COUNT(*) AS n FROM casos WHERE classificacao_pagamento = 'CANCELADO' OR status = 'CANCELADO'"
@@ -651,6 +655,7 @@ app.get('/api/dashboard', async (req, res) => {
       negados: contar('NEGADO'),
       pagos,
       pagosComprovante,
+      proximaParcela,
       cancelados
     });
   } catch (erro) {
@@ -666,8 +671,9 @@ app.get('/api/pagar-agora', async (req, res) => {
     const [linhas] = await pool.query(
       `SELECT id, segurado, nome_arquivo, cpf_ccb, parceiro, fundo, cia,
               valor_parcela, numero_parcelas_cobertas_produto,
+              parcelas_pagas, parcelas_restantes,
               valor_a_pagar, valor_total_a_pagar, valor_a_pagar_planilha,
-              valor_a_pagar_final, status, status_planilha
+              valor_a_pagar_final, status, status_planilha, classificacao_pagamento
        FROM casos WHERE ${CRITERIO_A_PAGAR}
        ORDER BY parceiro ASC, valor_a_pagar_final DESC, segurado ASC`
     );
