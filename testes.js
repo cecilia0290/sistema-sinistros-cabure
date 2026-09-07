@@ -50,11 +50,23 @@ teste('Fundo "GPC Fundo de Investimento em Direitos Creditórios" == Guardian (6
   assert.strictEqual(p.tetoParcela, 500);
   assert.strictEqual(p.fundoResolvido, true);
 });
-teste('Invest All: 6 / 1000 ; LA VIE (Nova/Resgata Aí): 3 / sem teto', () => {
+teste('Invest All: 6 / 1000 ; Nova e Resgata Ai (fundo LA VIE): 3 / sem teto cada, parceiros separados', () => {
   assert.strictEqual(regras.produtoDoParceiro('Invest All').tetoParcela, 1000);
-  assert.strictEqual(regras.normalizarParceiro('Nova'), 'LA VIE');
-  assert.strictEqual(regras.normalizarParceiro('Resgata Aí'), 'LA VIE');
-  assert.strictEqual(regras.produtoDoParceiro('LA VIE').tetoParcela, null);
+  assert.strictEqual(regras.normalizarParceiro('Nova'), 'Nova');
+  assert.strictEqual(regras.normalizarParceiro('Resgata Aí'), 'Resgata Ai');
+  assert.strictEqual(regras.produtoDoParceiro('Nova').tetoParcela, null);
+  assert.strictEqual(regras.produtoDoParceiro('Resgata Ai').tetoParcela, null);
+  assert.strictEqual(regras.produtoDoParceiro('Nova').parcelasCobertas, 3);
+  assert.strictEqual(regras.produtoDoParceiro('Resgata Ai').parcelasCobertas, 3);
+});
+teste('X3 (fundo X ao Cubo): 6 parcelas, teto 1000, sem teto total', () => {
+  assert.strictEqual(regras.normalizarParceiro('X 3'), 'X3');
+  assert.strictEqual(regras.normalizarParceiro('x3'), 'X3');
+  const p = regras.produtoDoParceiro('X 3');
+  assert.strictEqual(p.noCatalogo, true);
+  assert.strictEqual(p.parcelasCobertas, 6);
+  assert.strictEqual(p.tetoParcela, 1000);
+  assert.strictEqual(p.tetoTotal, null);
 });
 
 console.log('\n— Motor de regras (elegibilidade/carência/franquia inalterados) —');
@@ -206,17 +218,17 @@ teste('PROGRAMADO liberado por conferência (CCB na allowlist) => entra em A PAG
   const t2 = transformar(mapa, linhas, { liberarProgramadosTodos: true });
   assert.strictEqual(t2.casos.every(c => c.casos_a_pagar === 1), true);
 });
-teste('Parceiro fora do catálogo (X3 / vazio / "1573") => NÃO entra em A PAGAR', () => {
+teste('Parceiro fora do catálogo (desconhecido / vazio / "1573") => NÃO entra em A PAGAR', () => {
   const mapa = { segurado: 0, cpf_ccb: 1, parceiro: 2, casos_a_pagar: 3, valor_a_pagar: 4 };
   const linhas = [
-    { __linha: 2, col0: 'Fulano X3', col1: '90000000001', col2: 'X 3', col3: 'PAGAR', col4: '200' },
+    { __linha: 2, col0: 'Fulano Desconhecido', col1: '90000000001', col2: 'PARCEIRO NOVO SEM CADASTRO', col3: 'PAGAR', col4: '200' },
     { __linha: 3, col0: 'Sem Parc', col1: '90000000002', col2: '', col3: 'PAGAR', col4: '300' },
     { __linha: 4, col0: 'Erro Dig', col1: '90000000003', col2: '1573', col3: 'PAGAR', col4: '400' },
     { __linha: 5, col0: 'Ok Sethi', col1: '90000000004', col2: 'SETHI', col3: 'PAGAR', col4: '500' }
   ];
   const t = transformar(mapa, linhas).casos;
-  assert.strictEqual(t.find(c => c.segurado === 'Fulano X3').categoria_pagamento, 'PARCEIRO_NAO_IDENTIFICADO');
-  assert.strictEqual(t.find(c => c.segurado === 'Fulano X3').casos_a_pagar, 0);
+  assert.strictEqual(t.find(c => c.segurado === 'Fulano Desconhecido').categoria_pagamento, 'PARCEIRO_NAO_IDENTIFICADO');
+  assert.strictEqual(t.find(c => c.segurado === 'Fulano Desconhecido').casos_a_pagar, 0);
   assert.strictEqual(t.find(c => c.segurado === 'Sem Parc').casos_a_pagar, 0);
   assert.strictEqual(t.find(c => c.segurado === 'Erro Dig').casos_a_pagar, 0);
   assert.strictEqual(t.find(c => c.segurado === 'Ok Sethi').casos_a_pagar, 1);

@@ -45,7 +45,7 @@ e recarrega tudo a partir da planilha.
 | **CPF** | só dígitos, zero à esquerda reposto para **11 dígitos** (`1234567890` → `01234567890`). |
 | **CCB composto** | `123/456`, `123-456`, `123 e 456` são **separados** antes de comparar. |
 | **Duplicidade** | pessoas em várias linhas (mesmo CPF/CCB, ou CPF com/sem zero) viram **1 caso só**. As linhas cruas ficam em `linhas_planilha` para auditoria. |
-| **Parceiro** | `Fintech Corban` e `Fintech do Corban` (e variações) → **um nome canônico**: `Fintech do Corban`. Idem SETHI, Granatech, POUPACRED, Invest All, LA VIE (Nova + Resgata Aí). |
+| **Parceiro** | `Fintech Corban` e `Fintech do Corban` (e variações) → **um nome canônico**: `Fintech do Corban`. Idem SETHI, Granatech, POUPACRED, Invest All. **Nova** e **Resgata Ai** são parceiros SEPARADOS (contatos diferentes), não são unificados entre si — ambos usam o mesmo FUNDO por trás (`LA VIE`), que é preenchido automaticamente na coluna FUNDO quando vier vazia. |
 | **Parcelas cobertas / teto** | vêm do catálogo em `regras.js` (`PARCEIROS`). **Fintech do Corban = 4 parcelas**. POUPACRED tem 2 produtos — escolhidos pela coluna **FUNDO**. |
 | **Pagamento** | decidido **só** pela coluna **`CASOS A PAGAR`** (`casos_a_pagar`). A coluna **`STATUS`** é gravada em `status_planilha` apenas como etiqueta e **não** entra em nenhuma decisão nem soma. |
 | **Elegibilidade / carência / franquia / CIA** | **inalteradas** — o motor de regras roda igual ao de antes. |

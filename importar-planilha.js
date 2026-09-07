@@ -46,14 +46,21 @@ for (let i = 0; i < args.length; i++) {
   else if (!a.startsWith('--') && !opcoes.arquivo) opcoes.arquivo = a;
 }
 
-// Chaves (só dígitos) de casos PROGRAMADO liberados por conferência manual:
+// Chaves (só dígitos) de casos PROGRAMADO liberados por conferência manual,
+// e correções pontuais de FUNDO com erro de digitação confirmado — ambos de
 // config-pagamento.js + o que vier em --liberar-programados "123,456".
 const liberadosChaves = new Set();
+const fundoCorrigido = new Map();
 try {
   const cfg = require('./config-pagamento');
   for (const item of (cfg.programadosLiberados || [])) {
     if (item.ccb) liberadosChaves.add(String(item.ccb).replace(/\D/g, ''));
     if (item.cpf) liberadosChaves.add(String(item.cpf).replace(/\D/g, '').padStart(11, '0'));
+  }
+  for (const item of (cfg.fundoCorrigido || [])) {
+    const info = { fundo: item.fundo, nota: item.nota };
+    if (item.ccb) fundoCorrigido.set(String(item.ccb).replace(/\D/g, ''), info);
+    if (item.cpf) fundoCorrigido.set(String(item.cpf).replace(/\D/g, '').padStart(11, '0'), info);
   }
 } catch (e) { /* sem config, tudo bem */ }
 if (opcoes.liberarProgLista) {
@@ -415,7 +422,8 @@ function confirmar() {
     const aba = lerAba();
     const resultado = transformar(aba.mapa, aba.linhas, {
       liberarProgramadosTodos: opcoes.liberarProgTodos,
-      liberadosChaves
+      liberadosChaves,
+      fundoCorrigido
     });
     const casos = resultado.casos.map(aplicarMotor);
     relatorio(aba, resultado, casos);

@@ -22,7 +22,14 @@ const PARCEIROS = {
   'SETHI':             { parcelasCobertas: 6, tetoParcela: 1000, tetoTotal: null },
   'Granatech':         { parcelasCobertas: 6, tetoParcela: 500,  tetoTotal: 3000 },
   'Invest All':        { parcelasCobertas: 6, tetoParcela: 1000, tetoTotal: null },
-  'LA VIE':            { parcelasCobertas: 3, tetoParcela: null,  tetoTotal: null }, // Nova + Resgata Aí — sem teto fixo definido
+  // Nova e Resgata Ai são PARCEIROS distintos (contatos diferentes: Nova = Andreza,
+  // Resgata Ai = Luana) que usam o mesmo FUNDO por trás ("LA VIE PFO FIDC").
+  // LA VIE não é parceiro — é o fundo. Mesmo catálogo de produto para os dois.
+  'Nova':              { parcelasCobertas: 3, tetoParcela: null,  tetoTotal: null },
+  'Resgata Ai':        { parcelasCobertas: 3, tetoParcela: null,  tetoTotal: null },
+  // X3 (fundo "X ao Cubo Securitizadora S/A", contato Sophia). Regra confirmada
+  // direto na planilha (coluna "Fonte do Produto"): teto R$1.000, até 6 parcelas.
+  'X3':                { parcelasCobertas: 6, tetoParcela: 1000, tetoTotal: null },
   'POUPACRED': {
     porFundo: [
       { termos: ['guardian', 'bmp'],                     parcelasCobertas: 6, tetoParcela: 500,  tetoTotal: null },
@@ -45,12 +52,15 @@ function normalizarParceiro(nome) {
   if (!limpo) return null;
 
   // Nomes curtos/genéricos: casam só por igualdade exata (evita falso-positivo).
+  // Nova e Resgata Ai são parceiros SEPARADOS (contatos diferentes) — não juntar.
+  // "LA VIE" sozinho na coluna PARCEIRO é ambíguo (é o nome do FUNDO, não de um
+  // parceiro): não mapeia pra nenhum dos dois, fica para conferência manual.
   const EXATO = {
-    'nova': 'LA VIE',
-    'resgata': 'LA VIE',
-    'resgata ai': 'LA VIE',
-    'nova + resgata ai': 'LA VIE',
-    'nova e resgata ai': 'LA VIE'
+    'nova': 'Nova',
+    'resgata': 'Resgata Ai',
+    'resgata ai': 'Resgata Ai',
+    'x 3': 'X3',
+    'x3': 'X3'
   };
   if (EXATO[limpo]) return EXATO[limpo];
 
@@ -64,8 +74,8 @@ function normalizarParceiro(nome) {
     ['poupa cred', 'POUPACRED'],
     ['invest all', 'Invest All'],
     ['investall', 'Invest All'],
-    ['la vie', 'LA VIE'],
-    ['lavie', 'LA VIE']
+    ['resgata', 'Resgata Ai'],
+    ['x ao cubo', 'X3']
   ];
   for (const [frag, canon] of CONTEM) {
     if (limpo.includes(frag)) return canon;

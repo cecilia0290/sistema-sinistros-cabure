@@ -15,8 +15,11 @@ function brl(n) {
 
 // `linhas`: array de objetos { __linha: <n>, col0, col1, ... }  (valores já "crus" da célula)
 // `mapa`  : { campoLogico: <indiceDaColuna> }
-// `opcoes`: { liberarProgramadosTodos: bool, liberadosChaves: Set<digitos> }
-//           -> promove casos "PROGRAMADO" para "A PAGAR" (conferência manual)
+// `opcoes`: { liberarProgramadosTodos: bool, liberadosChaves: Set<digitos>,
+//             fundoCorrigido: Map<digitos, {fundo, nota}> }
+//           -> promove casos "PROGRAMADO" para "A PAGAR" (conferência manual);
+//              fundoCorrigido substitui a coluna FUNDO da planilha por engano
+//              de digitação já confirmado manualmente (config-pagamento.js)
 function transformar(mapa, linhas, opcoes = {}) {
   const avisos = [];
   const liberarTodos = !!opcoes.liberarProgramadosTodos;
@@ -131,14 +134,15 @@ function transformar(mapa, linhas, opcoes = {}) {
     const chavesGrupo = [...new Set(regs.flatMap(r => r.chaves))].sort();
     const rotulo = primeiro(regs, 'segurado') || chavesGrupo[0];
 
+    const digitosGrupo = new Set([
+      ...regs.map(r => r._cpf).filter(Boolean),
+      ...regs.flatMap(r => r._ccbs || [])
+    ]);
+
     let catCaso = categoriaDoCaso(regs);
     let programadoLiberado = false;
     if (catCaso === 'PROGRAMADO') {
-      const digitosCaso = new Set([
-        ...regs.map(r => r._cpf).filter(Boolean),
-        ...regs.flatMap(r => r._ccbs || [])
-      ]);
-      if (liberarTodos || [...digitosCaso].some(d => liberados.has(d))) {
+      if (liberarTodos || [...digitosGrupo].some(d => liberados.has(d))) {
         catCaso = 'A_PAGAR';
         programadoLiberado = true;
         avisos.push(`"${rotulo}": estava PROGRAMADO — liberado por conferência manual, entrou em A PAGAR.`);
@@ -148,7 +152,16 @@ function transformar(mapa, linhas, opcoes = {}) {
     // Se pagaria (A_PAGAR) mas o parceiro não está no catálogo (X 3, "NAO CADASTRADO",
     // "1573", vazio…): NÃO entra automático — fica para confirmação manual da regra.
     const parceiroBrutoCaso = primeiro(regs, 'parceiroBruto');
-    const fundoCaso = primeiro(regs, 'fundo');
+
+    // Correção manual de FUNDO com erro de digitação confirmado (config-pagamento.js).
+    const fundoCorrigidoInfo = opcoes.fundoCorrigido instanceof Map
+      ? [...digitosGrupo].map(d => opcoes.fundoCorrigido.get(d)).find(Boolean)
+      : null;
+    if (fundoCorrigidoInfo) {
+      avisos.push(`"${rotulo}": FUNDO corrigido manualmente de "${primeiro(regs, 'fundo') || '(vazio)'}" para "${fundoCorrigidoInfo.fundo}" — ${fundoCorrigidoInfo.nota}.`);
+    }
+    const fundoCaso = fundoCorrigidoInfo ? fundoCorrigidoInfo.fundo : primeiro(regs, 'fundo');
+
     if (catCaso === 'A_PAGAR') {
       const prodChk = produtoDoParceiro(parceiroBrutoCaso, fundoCaso);
       if (!prodChk.noCatalogo) {
@@ -177,7 +190,7 @@ function transformar(mapa, linhas, opcoes = {}) {
       segurado: primeiro(regs, 'segurado'),
       cpf_ccb: formatarCpfCcb(regs.map(r => r.cpfCcbBruto).filter(Boolean).join(' / ')),
       parceiro_bruto: primeiro(regs, 'parceiroBruto'),
-      fundo: primeiro(regs, 'fundo'),
+      fundo: fundoCaso,
       cia: primeiro(regs, 'cia'),
       mes_ano_contratacao: primeiro(regs, 'mesAnoContratacao'),
       data_contratacao: primeiro(regs, 'dataContratacao'),
@@ -233,6 +246,16 @@ function aplicarMotor(caso) {
     numero_parcelas_cobertas_produto: null
   });
   caso.parceiro = r.parceiroCanonico;
+  // Nova e Resgata Ai são parceiros distintos, mas ambos usam o mesmo FUNDO por
+  // trás ("LA VIE PFO FIDC"). Preenche a coluna FUNDO quando ela vier vazia da
+  // planilha, ou normaliza a grafia quando já vier como "LA VIE".
+  if (caso.parceiro === 'Nova' || caso.parceiro === 'Resgata Ai') {
+    const fundoLimpo = P.semAcento(String(caso.fundo || '').trim().toLowerCase()).replace(/\s+/g, ' ');
+    const fundoSemEspaco = fundoLimpo.replace(/\s+/g, '');
+    if (!fundoLimpo || fundoSemEspaco === 'lavie' || fundoSemEspaco.startsWith('lavie')) {
+      caso.fundo = 'LA VIE';
+    }
+  }
   caso.carencia_dias = r.carenciaDias;
   caso.franquia_data = r.franquiaData ? r.franquiaData.toISOString().slice(0, 10) : null;
   caso.cia_calculada = r.cia;
