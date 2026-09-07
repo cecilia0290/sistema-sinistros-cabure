@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Exportar — Caburé Sinistros</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;650&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/estilo.css">
+</head>
+<body>
+  <div class="app-layout">
+    <div id="sidebar" class="sidebar"></div>
+    <div class="main-content">
+      <div class="page">
+        <div class="page-header">
+          <div>
+            <span class="eyebrow">Análises</span>
+            <h1 class="page-title">Exportar para Excel</h1>
+            <p class="page-desc">Escolha os filtros. Se <strong>“Incluir coluna CIA”</strong> estiver desmarcado, a coluna CIA <strong>não é gerada</strong> no arquivo (os dados são montados sem ela — não é só ocultar).</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Filtros</h3>
+          <div class="form-grid">
+            <label>Parceiro
+              <select id="f-parceiro"><option value="">Todos</option></select>
+            </label>
+            <label>Fundo
+              <select id="f-fundo"><option value="">Todos</option></select>
+            </label>
+            <label>CIA (quem paga)
+              <select id="f-cia">
+                <option value="TODOS">Todos</option>
+                <option value="MetLife">Só MetLife</option>
+                <option value="Caburé">Só Caburé</option>
+              </select>
+            </label>
+            <label>Status
+              <select id="f-status"><option value="">Todos</option></select>
+            </label>
+            <label>Data do evento — de
+              <input type="date" id="f-evento-de">
+            </label>
+            <label>Data do evento — até
+              <input type="date" id="f-evento-ate">
+            </label>
+            <label>Adicionado ao sistema — de
+              <input type="date" id="f-criado-de">
+            </label>
+            <label>Adicionado ao sistema — até
+              <input type="date" id="f-criado-ate">
+            </label>
+          </div>
+
+          <label class="check-linha" style="margin-top:14px;">
+            <input type="checkbox" id="f-incluir-cia">
+            Incluir coluna CIA na planilha <span class="hint">(informação interna — deixe desmarcado ao enviar para o parceiro)</span>
+          </label>
+
+          <div class="aviso-caixa" id="previa" style="margin-top:14px;"></div>
+
+          <div style="margin-top:16px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+            <button id="btn-exportar" class="btn btn-primary">Baixar planilha</button>
+            <span class="col-mono" id="nome-arquivo" style="font-size:12px; color:var(--text-muted);"></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function preencher(sel, itens) {
+      const el = document.getElementById(sel);
+      el.innerHTML = el.children[0].outerHTML + itens.map(i => `<option value="${i}">${i}</option>`).join('');
+    }
+
+    function montarQuery() {
+      const q = new URLSearchParams();
+      const add = (k, v) => { if (v) q.set(k, v); };
+      add('parceiro', f('f-parceiro'));
+      add('fundo', f('f-fundo'));
+      const cia = f('f-cia'); if (cia && cia !== 'TODOS') q.set('cia', cia); else q.set('cia', 'TODOS');
+      add('status', f('f-status'));
+      add('evento_de', f('f-evento-de'));
+      add('evento_ate', f('f-evento-ate'));
+      add('criado_de', f('f-criado-de'));
+      add('criado_ate', f('f-criado-ate'));
+      q.set('incluir_cia', document.getElementById('f-incluir-cia').checked ? '1' : '0');
+      return q;
+    }
+    const f = (id) => document.getElementById(id).value;
+
+    function nomeArquivoPrevisto() {
+      const hoje = new Date();
+      const dd = String(hoje.getDate()).padStart(2, '0') + String(hoje.getMonth() + 1).padStart(2, '0') + hoje.getFullYear();
+      const cia = f('f-cia');
+      const inc = document.getElementById('f-incluir-cia').checked;
+      const sufixo = inc ? (cia === 'TODOS' || !cia ? 'TODOS_interno' : cia.toUpperCase()) : 'sem_cia';
+      const pref = f('f-status') === 'PRONTO PARA PAGAR' ? 'a_pagar_' : '';
+      return `casos_${pref}${sufixo}_${dd}.xlsx`;
+    }
+
+    function atualizarPrevia() {
+      const inc = document.getElementById('f-incluir-cia').checked;
+      document.getElementById('previa').innerHTML = inc
+        ? '⚠️ A planilha <strong>vai conter</strong> a coluna CIA. Use apenas internamente.'
+        : '✅ A planilha <strong>não terá</strong> a coluna CIA (segura para enviar ao parceiro).';
+      document.getElementById('nome-arquivo').textContent = '→ ' + nomeArquivoPrevisto();
+    }
+
+    document.getElementById('btn-exportar').addEventListener('click', () => {
+      window.location.href = '/exportar?' + montarQuery().toString();
+    });
+    document.querySelectorAll('.card select, .card input').forEach(el => el.addEventListener('change', atualizarPrevia));
+
+    (async () => {
+      const r = await fetch('/api/filtros');
+      const d = await r.json();
+      preencher('f-parceiro', d.parceiros || []);
+      preencher('f-fundo', d.fundos || []);
+      preencher('f-status', d.status || []);
+      atualizarPrevia();
+    })();
+  </script>
+  <script src="/layout.js"></script>
+</body>
+</html>

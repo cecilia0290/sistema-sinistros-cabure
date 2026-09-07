@@ -20,71 +20,104 @@
           <div>
             <span class="eyebrow">Visão geral</span>
             <h1 class="page-title">Dashboard</h1>
-            <p class="page-desc">Central de controle operacional — panorama consolidado de todos os casos.</p>
+            <p class="page-desc">Panorama consolidado dos casos. O que está <strong>pronto pra pagar</strong> vem da coluna <em>CASOS A PAGAR</em> da planilha — os cartões e os gráficos usam esse mesmo critério.</p>
           </div>
+          <div class="header-meta" id="header-meta"></div>
         </div>
 
         <div class="stat-grid">
           <div class="stat-card destaque">
-            <div class="stat-top"><span class="stat-label">A pagar</span>
+            <div class="stat-top"><span class="stat-label">Total a pagar</span>
               <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v20M17 6.5c0-2-2.2-3-5-3s-5 1.2-5 3 2.2 2.7 5 3 5 1 5 3-2.2 3-5 3-5-1-5-3"/></svg></div>
             </div>
             <div class="stat-value" id="stat-a-pagar">R$ 0,00</div>
+            <div class="stat-sub" id="stat-a-pagar-sub">— casos a pagar</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-top"><span class="stat-label">Casos a pagar</span>
+              <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.3 2.3L16 9.5"/></svg></div>
+            </div>
+            <div class="stat-value" id="stat-a-pagar-qtd">0</div>
+            <div class="stat-sub">segurados prontos</div>
           </div>
           <div class="stat-card">
             <div class="stat-top"><span class="stat-label">Total de casos</span>
               <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h10"/></svg></div>
             </div>
             <div class="stat-value" id="stat-total">0</div>
+            <div class="stat-sub">na base</div>
           </div>
           <div class="stat-card">
             <div class="stat-top"><span class="stat-label">Em análise</span>
               <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></div>
             </div>
             <div class="stat-value" id="stat-analise">0</div>
+            <div class="stat-sub">carência / elegibilidade</div>
           </div>
           <div class="stat-card">
             <div class="stat-top"><span class="stat-label">Pendentes</span>
               <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg></div>
             </div>
             <div class="stat-value" id="stat-pendentes">0</div>
+            <div class="stat-sub">aguardando documento</div>
           </div>
+          <div class="stat-card">
+            <div class="stat-top"><span class="stat-label">Negados</span>
+              <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg></div>
+            </div>
+            <div class="stat-value" id="stat-negados">0</div>
+            <div class="stat-sub">fora de cobertura</div>
+          </div>
+          <a class="stat-card" href="/conferencia.html" style="text-decoration:none;">
+            <div class="stat-top"><span class="stat-label">Conferência manual</span>
+              <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg></div>
+            </div>
+            <div class="stat-value" id="stat-conferencia">0</div>
+            <div class="stat-sub">leitura automática não concluiu</div>
+          </a>
           <div class="stat-card">
             <div class="stat-top"><span class="stat-label">Pagos</span>
               <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.3 2.3L16 9.5"/></svg></div>
             </div>
             <div class="stat-value" id="stat-pagos">0</div>
+            <div class="stat-sub">encerrados</div>
           </div>
           <div class="stat-card">
             <div class="stat-top"><span class="stat-label">Cancelados</span>
-              <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/></svg></div>
+              <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6L6 18"/></svg></div>
             </div>
             <div class="stat-value" id="stat-cancelados">0</div>
+            <div class="stat-sub">encerrados</div>
           </div>
         </div>
 
         <div class="chart-grid">
           <div class="chart-card">
-            <h3>Casos recebidos por mês</h3>
-            <span class="chart-sub">Volume de novos casos ao longo do tempo</span>
+            <div class="chart-head">
+              <div><h3>Casos por mês de contratação</h3><span class="chart-sub">Volume de contratos ao longo do tempo</span></div>
+            </div>
             <div class="chart-canvas-wrap"><canvas id="grafico-por-mes"></canvas></div>
           </div>
           <div class="chart-card">
-            <h3>Distribuição por status</h3>
-            <span class="chart-sub">Situação atual de todos os casos</span>
+            <div class="chart-head">
+              <div><h3>Distribuição por status</h3><span class="chart-sub">Etiqueta do motor de regras (não decide pagamento)</span></div>
+            </div>
             <div class="chart-canvas-wrap"><canvas id="grafico-status"></canvas></div>
           </div>
         </div>
 
         <div class="chart-grid-2">
           <div class="chart-card">
-            <h3>Casos por parceiro</h3>
-            <span class="chart-sub">Quantidade de casos, por parceiro financeiro</span>
+            <div class="chart-head">
+              <div><h3>Casos por parceiro</h3><span class="chart-sub">Todos os casos da base, por parceiro</span></div>
+            </div>
             <div class="chart-canvas-wrap"><canvas id="grafico-casos-parceiro"></canvas></div>
           </div>
           <div class="chart-card">
-            <h3>Valor a pagar por parceiro</h3>
-            <span class="chart-sub">Soma dos valores calculados, por parceiro</span>
+            <div class="chart-head">
+              <div><h3>Valor a pagar por parceiro</h3><span class="chart-sub">Somente casos a pagar — a soma bate com o cartão “Total a pagar”</span></div>
+              <span class="chart-total" id="chart-total-valor">R$ 0,00</span>
+            </div>
             <div class="chart-canvas-wrap"><canvas id="grafico-valor-parceiro"></canvas></div>
           </div>
         </div>
@@ -93,7 +126,19 @@
   </div>
 
   <script>
-    const CORES = ['#C9932E', '#2E3E8F', '#2FA35B', '#D6404F', '#8A93A3', '#D89A2B', '#4C5FC9', '#1C7A40'];
+    const CORES = ['#C9932E', '#2E3E8F', '#2FA35B', '#D6404F', '#8A93A3', '#D89A2B', '#4C5FC9', '#1C7A40', '#B4622A', '#5B6BB0'];
+
+    const fmtBRL = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    const fmtBRLcurto = (v) => {
+      v = Number(v || 0);
+      if (Math.abs(v) >= 1000) return 'R$ ' + (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'k';
+      return 'R$ ' + v.toLocaleString('pt-BR', { maximumFractionDigits: 0 });
+    };
+    const rotuloMes = (ym) => {
+      if (!ym || !/^\d{4}-\d{2}$/.test(ym)) return ym || '—';
+      const [a, m] = ym.split('-');
+      return ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'][+m - 1] + '/' + a.slice(2);
+    };
 
     function graficoOuVazio(idCanvas, temDados, montarGrafico) {
       const canvas = document.getElementById(idCanvas);
@@ -108,24 +153,30 @@
       const resposta = await fetch('/api/dashboard');
       const dados = await resposta.json();
 
-      document.getElementById('stat-a-pagar').textContent = 'R$ ' + Number(dados.totalAPagar).toLocaleString('pt-BR', { minimumFractionDigits: 2 });
-      document.getElementById('stat-total').textContent = dados.totalCasos;
-      document.getElementById('stat-analise').textContent = dados.emAnalise;
-      document.getElementById('stat-pendentes').textContent = dados.pendentes;
-      document.getElementById('stat-pagos').textContent = dados.pagos;
-      document.getElementById('stat-cancelados').textContent = dados.cancelados;
+      document.getElementById('stat-a-pagar').textContent = fmtBRL(dados.totalAPagar);
+      document.getElementById('stat-a-pagar-sub').textContent = (dados.aPagarQtd || 0) + ' casos a pagar';
+      document.getElementById('stat-a-pagar-qtd').textContent = dados.aPagarQtd || 0;
+      document.getElementById('stat-total').textContent = dados.totalCasos || 0;
+      document.getElementById('stat-analise').textContent = dados.emAnalise || 0;
+      document.getElementById('stat-pendentes').textContent = dados.pendentes || 0;
+      document.getElementById('stat-negados').textContent = dados.negados || 0;
+      document.getElementById('stat-conferencia').textContent = dados.emConferencia || 0;
+      document.getElementById('stat-pagos').textContent = dados.pagos || 0;
+      document.getElementById('stat-cancelados').textContent = dados.cancelados || 0;
+      document.getElementById('chart-total-valor').textContent = fmtBRL(dados.totalAPagar);
+      document.getElementById('header-meta').textContent = 'Atualizado ' + new Date().toLocaleString('pt-BR');
 
       Chart.defaults.font.family = "'Inter', sans-serif";
       Chart.defaults.font.size = 11.5;
       Chart.defaults.color = '#6B7280';
 
-      graficoOuVazio('grafico-por-mes', dados.porMes.length > 0, (canvas) => {
+      graficoOuVazio('grafico-por-mes', (dados.porMes || []).length > 0, (canvas) => {
         new Chart(canvas, {
           type: 'line',
           data: {
-            labels: dados.porMes.map(item => item.mes),
+            labels: dados.porMes.map(i => rotuloMes(i.mes)),
             datasets: [{
-              data: dados.porMes.map(item => item.quantidade),
+              data: dados.porMes.map(i => i.quantidade),
               borderColor: '#C9932E', backgroundColor: 'rgba(201,147,46,0.12)',
               fill: true, tension: 0.35, pointRadius: 3, pointBackgroundColor: '#C9932E'
             }]
@@ -138,26 +189,26 @@
         });
       });
 
-      graficoOuVazio('grafico-status', dados.porStatus.length > 0, (canvas) => {
+      graficoOuVazio('grafico-status', (dados.porStatus || []).length > 0, (canvas) => {
         new Chart(canvas, {
           type: 'doughnut',
           data: {
-            labels: dados.porStatus.map(item => item.status),
-            datasets: [{ data: dados.porStatus.map(item => item.quantidade), backgroundColor: CORES, borderWidth: 0 }]
+            labels: dados.porStatus.map(i => i.status),
+            datasets: [{ data: dados.porStatus.map(i => i.quantidade), backgroundColor: CORES, borderWidth: 0 }]
           },
           options: {
-            responsive: true, maintainAspectRatio: false, cutout: '65%',
+            responsive: true, maintainAspectRatio: false, cutout: '66%',
             plugins: { legend: { position: 'right', labels: { boxWidth: 8, boxHeight: 8, padding: 10, font: { size: 10.5 } } } }
           }
         });
       });
 
-      graficoOuVazio('grafico-casos-parceiro', dados.porParceiro.length > 0, (canvas) => {
+      graficoOuVazio('grafico-casos-parceiro', (dados.porParceiro || []).length > 0, (canvas) => {
         new Chart(canvas, {
           type: 'bar',
           data: {
-            labels: dados.porParceiro.map(item => item.parceiro),
-            datasets: [{ data: dados.porParceiro.map(item => item.quantidade), backgroundColor: '#26355F', borderRadius: 5, maxBarThickness: 26 }]
+            labels: dados.porParceiro.map(i => i.parceiro),
+            datasets: [{ data: dados.porParceiro.map(i => i.quantidade), backgroundColor: '#26355F', borderRadius: 5, maxBarThickness: 26 }]
           },
           options: {
             indexAxis: 'y', responsive: true, maintainAspectRatio: false,
@@ -167,17 +218,23 @@
         });
       });
 
-      graficoOuVazio('grafico-valor-parceiro', dados.valorPorParceiro.length > 0, (canvas) => {
+      graficoOuVazio('grafico-valor-parceiro', (dados.valorPorParceiro || []).length > 0, (canvas) => {
         new Chart(canvas, {
           type: 'bar',
           data: {
-            labels: dados.valorPorParceiro.map(item => item.parceiro),
-            datasets: [{ data: dados.valorPorParceiro.map(item => Number(item.total)), backgroundColor: '#C9932E', borderRadius: 5, maxBarThickness: 26 }]
+            labels: dados.valorPorParceiro.map(i => i.parceiro),
+            datasets: [{ data: dados.valorPorParceiro.map(i => Number(i.total)), backgroundColor: '#C9932E', borderRadius: 5, maxBarThickness: 26 }]
           },
           options: {
             indexAxis: 'y', responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { display: false }, tooltip: { callbacks: { label: (ctx) => 'R$ ' + ctx.parsed.x.toFixed(2) } } },
-            scales: { x: { beginAtZero: true, grid: { color: '#EFF1F5' }, ticks: { callback: (v) => 'R$ ' + v } }, y: { grid: { display: false } } }
+            plugins: {
+              legend: { display: false },
+              tooltip: { callbacks: { label: (ctx) => fmtBRL(ctx.parsed.x) } }
+            },
+            scales: {
+              x: { beginAtZero: true, grid: { color: '#EFF1F5' }, ticks: { callback: (v) => fmtBRLcurto(v) } },
+              y: { grid: { display: false } }
+            }
           }
         });
       });

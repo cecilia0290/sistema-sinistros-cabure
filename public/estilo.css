@@ -315,3 +315,137 @@ td.col-valor { text-align: right; font-weight: 600; }
   .page { padding: 22px 16px 50px; }
   .page-header { flex-direction: column; align-items: flex-start; }
 }
+
+/* ==========================================================================
+   Refinamentos v3 — mesma paleta (azul-noite + dourado), só mais acabamento.
+   ========================================================================== */
+
+/* Cabeçalho de página: linha de base + carimbo de atualização */
+.page-header { border-bottom: 1px solid var(--border); padding-bottom: 18px; }
+.page-desc strong { color: var(--text); font-weight: 650; }
+.page-desc em { font-style: normal; font-weight: 600; color: var(--gold); background: rgba(201,147,46,0.10); padding: 0 5px; border-radius: 5px; }
+.header-meta {
+  font-size: 11px; color: var(--text-faint); font-weight: 500; white-space: nowrap;
+  font-family: 'IBM Plex Mono', monospace; align-self: flex-end;
+}
+
+/* Cartões de estatística: acabamento mais firme + subtítulo */
+.stat-card { border-radius: var(--radius-lg); }
+.stat-card .stat-value { letter-spacing: -0.02em; line-height: 1.1; }
+.stat-sub { margin-top: 6px; font-size: 10.5px; color: var(--text-faint); font-weight: 500; letter-spacing: 0.2px; }
+.stat-card.destaque {
+  background:
+    radial-gradient(120% 120% at 100% 0%, rgba(201,147,46,0.22), transparent 55%),
+    linear-gradient(155deg, var(--navy-light), var(--navy));
+  box-shadow: var(--shadow), inset 0 0 0 1px rgba(255,255,255,0.04);
+}
+.stat-card.destaque .stat-sub { color: rgba(224,177,92,0.85); }
+
+/* Gráficos: cabeçalho com título + total à direita */
+.chart-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.chart-head h3 { margin-bottom: 2px; }
+.chart-head .chart-sub { margin-bottom: 0; }
+.chart-total {
+  font-family: 'Space Grotesk', sans-serif; font-size: 15px; font-weight: 600; color: var(--gold);
+  background: rgba(201,147,46,0.10); border: 1px solid rgba(201,147,46,0.28);
+  padding: 4px 10px; border-radius: 20px; white-space: nowrap; flex-shrink: 0;
+}
+.chart-card { padding-bottom: 14px; }
+.chart-canvas-wrap { height: 232px; }
+
+/* Tabelas: zebra suave, cabeçalho com sombra, coluna numérica, linha de total */
+tbody tr:nth-child(even) { background: #FCFCFD; }
+tbody tr:hover { background: #F4F6FB; }
+thead th { box-shadow: inset 0 -1px 0 var(--border); }
+th.col-num, td.col-num { text-align: right; }
+td.col-valor { color: var(--text); }
+tfoot .linha-total td {
+  border-top: 2px solid var(--border); background: var(--bg);
+  font-weight: 700; font-size: 12px; color: var(--text); padding: 12px 14px;
+}
+tfoot .linha-total td:last-child { font-family: 'IBM Plex Mono', monospace; color: var(--gold-dark, #8A6A1E); font-size: 13px; }
+
+/* Faixa de resumo por parceiro (página "Pagar agora") */
+.resumo-strip { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+.resumo-chip {
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 9px 13px; box-shadow: var(--shadow-sm); min-width: 132px;
+}
+.resumo-chip-nome { font-size: 10.5px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-muted); }
+.resumo-chip-valor { font-family: 'Space Grotesk', sans-serif; font-size: 15px; font-weight: 600; color: var(--text); }
+.resumo-chip-qtd { font-size: 10.5px; color: var(--text-faint); }
+
+/* Estado vazio um pouco mais vivo */
+.vazio { border-radius: var(--radius); }
+.chart-empty { border: 1px dashed var(--border); border-radius: var(--radius-sm); }
+
+/* Foco visível também em linhas clicáveis */
+tr.linha-clicavel:focus-visible { outline: 2px solid var(--gold); outline-offset: -2px; }
+
+@media (max-width: 640px) {
+  .header-meta { align-self: flex-start; }
+  .chart-head { flex-direction: column; }
+}
+
+/* ==========================================================================
+   v4 — telas novas: conferência manual, upload em lote, quem paga, exportar.
+   ========================================================================== */
+
+/* Toggle segmentado (MetLife / Caburé) */
+.seg-toggle { display: inline-flex; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; padding: 3px; gap: 3px; box-shadow: var(--shadow-sm); }
+.seg-btn { border: none; background: none; font: inherit; font-size: 12.5px; font-weight: 600; color: var(--text-muted); padding: 7px 18px; border-radius: 7px; cursor: pointer; }
+.seg-btn:hover { color: var(--text); }
+.seg-btn.ativo { background: var(--navy); color: #fff; }
+
+/* Grid de formulário (exportar / filtros) */
+.form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+.form-grid label { display: flex; flex-direction: column; gap: 5px; font-size: 11.5px; font-weight: 600; color: var(--text-muted); }
+.form-grid select, .form-grid input, .conf-campo input {
+  font-family: 'Inter', sans-serif; font-size: 13px; padding: 8px 10px;
+  border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--text);
+}
+.form-grid select:focus, .form-grid input:focus, .conf-campo input:focus { outline: none; border-color: var(--gold); }
+.check-linha { display: flex; align-items: center; gap: 9px; font-size: 13px; font-weight: 500; color: var(--text); }
+.check-linha input { accent-color: var(--gold); width: 16px; height: 16px; }
+.check-linha .hint { color: var(--text-faint); font-weight: 400; font-size: 12px; }
+
+/* Conferência manual — lista + detalhe */
+.conf-layout { display: grid; grid-template-columns: 300px 1fr; gap: 18px; align-items: start; }
+@media (max-width: 900px) { .conf-layout { grid-template-columns: 1fr; } }
+.conf-lista { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; }
+.conf-lista-head { padding: 12px 14px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; color: var(--text-faint); border-bottom: 1px solid var(--border); }
+.conf-item { display: block; width: 100%; text-align: left; border: none; background: none; border-bottom: 1px solid var(--border-soft); padding: 11px 14px; cursor: pointer; font: inherit; }
+.conf-item:hover { background: var(--bg); }
+.conf-item.ativo { background: rgba(201,147,46,0.10); box-shadow: inset 3px 0 0 var(--gold); }
+.conf-item-nome { font-size: 13px; font-weight: 600; color: var(--text); }
+.conf-item-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.conf-item-motivo { font-size: 10.5px; color: var(--danger-text); margin-top: 4px; line-height: 1.35; }
+
+.conf-detalhe { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); padding: 20px 22px; min-height: 300px; }
+.conf-detalhe-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 12px; }
+.conf-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 14px; }
+@media (max-width: 800px) { .conf-cols { grid-template-columns: 1fr; } }
+.conf-sub { font-size: 10.5px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase; color: var(--text-faint); margin-bottom: 8px; }
+.conf-ocr pre { background: var(--navy); color: #D7DEEF; font-family: 'IBM Plex Mono', monospace; font-size: 11px; line-height: 1.5; padding: 14px; border-radius: 8px; max-height: 460px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+.conf-form { display: flex; flex-direction: column; gap: 11px; }
+.conf-campo { display: flex; flex-direction: column; gap: 5px; }
+.conf-campo-rot { font-size: 11px; font-weight: 600; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+.conf-acoes { margin-top: 8px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+/* Upload em lote — barra de progresso + log */
+.progress-wrap { height: 10px; background: var(--border-soft); border-radius: 20px; overflow: hidden; margin-bottom: 6px; }
+.progress-bar { height: 100%; width: 0; background: linear-gradient(90deg, var(--gold), var(--gold-light)); transition: width 0.25s var(--ease); }
+.progress-num { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--text-muted); margin-bottom: 12px; }
+.lote-log { max-height: 340px; overflow: auto; border: 1px solid var(--border-soft); border-radius: 8px; }
+.log-linha { display: flex; justify-content: space-between; gap: 12px; padding: 7px 12px; font-size: 11.5px; border-bottom: 1px solid var(--border-soft); }
+.log-linha span:first-child { font-weight: 600; color: var(--text); }
+.log-linha span:last-child { color: var(--text-muted); text-align: right; }
+.log-ok { background: var(--success-bg); }
+.log-dup { background: var(--bg); }
+.log-conf { background: var(--warning-bg); }
+.log-erro { background: var(--danger-bg); }
+.log-erro span { color: var(--danger-text) !important; }
+
+/* Coluna "Motivo" na lista de casos */
+.motivo-cel { display: inline-block; max-width: 320px; white-space: normal; font-size: 11.5px; color: var(--text-muted); line-height: 1.4; }

@@ -19,59 +19,102 @@
           <div>
             <span class="eyebrow">Ação</span>
             <h1 class="page-title">Pagar agora</h1>
-            <p class="page-desc">Casos elegíveis, com carência e franquia já cumpridas — prontos para pagamento imediato.</p>
+            <p class="page-desc">Casos marcados como <em>CASOS A PAGAR</em> na planilha. O total abaixo é a soma exata desta lista e bate com o cartão “Total a pagar” do Dashboard.</p>
           </div>
+          <div class="header-meta" id="header-meta"></div>
         </div>
 
-        <div class="stat-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 18px;">
+        <div class="stat-grid" style="grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); margin-bottom: 18px;">
           <div class="stat-card destaque">
             <div class="stat-top"><span class="stat-label">Total a pagar agora</span>
               <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2v20M17 6.5c0-2-2.2-3-5-3s-5 1.2-5 3 2.2 2.7 5 3 5 1 5 3-2.2 3-5 3-5-1-5-3"/></svg></div>
             </div>
             <div class="stat-value" id="stat-total-pagar">R$ 0,00</div>
+            <div class="stat-sub" id="stat-total-sub">— segurados</div>
           </div>
           <div class="stat-card">
             <div class="stat-top"><span class="stat-label">Segurados prontos</span>
               <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8.5 12.5l2.3 2.3L16 9.5"/></svg></div>
             </div>
             <div class="stat-value" id="stat-total-segurados">0</div>
+            <div class="stat-sub">sem duplicar pessoa</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-top"><span class="stat-label">Parceiros</span>
+              <div class="stat-icon"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M4 12h16M4 17h16"/></svg></div>
+            </div>
+            <div class="stat-value" id="stat-total-parceiros">0</div>
+            <div class="stat-sub">com casos a pagar</div>
           </div>
         </div>
+
+        <div class="resumo-strip" id="resumo-parceiros"></div>
 
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>ID</th><th>Segurado</th><th>CPF/CCB</th><th>Parceiro</th><th>CIA</th><th>Valor a pagar</th></tr>
+              <tr>
+                <th>ID</th><th>Segurado</th><th>CPF/CCB</th><th>Parceiro</th><th>Fundo</th><th>CIA</th>
+                <th class="col-num">Parc.</th><th class="col-num">Valor / parcela</th><th class="col-num">Total a pagar</th>
+              </tr>
             </thead>
             <tbody id="tabela-pagar"></tbody>
+            <tfoot id="rodape-tabela"></tfoot>
           </table>
-          <div id="mensagem-vazia" class="vazio" style="display:none;">Nenhum caso pronto para pagamento no momento.</div>
+          <div id="mensagem-vazia" class="vazio" style="display:none;">Nenhum caso marcado como “a pagar” no momento.</div>
         </div>
       </div>
     </div>
   </div>
 
   <script>
+    const fmtBRL = (v) => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
     async function carregarPagarAgora() {
-      const resposta = await fetch('/casos?status=' + encodeURIComponent('PRONTO PARA PAGAR'));
-      const casos = await resposta.json();
+      const resposta = await fetch('/api/pagar-agora');
+      const dados = await resposta.json();
+      const casos = dados.casos || [];
 
       document.getElementById('tabela-pagar').innerHTML = casos.map(caso => `
-        <tr>
-          <td>${caso.id}</td>
-          <td>${caso.segurado || caso.nome_arquivo}</td>
-          <td class="col-mono">${caso.cpf_ccb || '-'}</td>
-          <td>${caso.parceiro || '-'}</td>
-          <td>${caso.cia || '-'}</td>
-          <td class="col-valor col-mono">${caso.valor_a_pagar !== null ? 'R$ ' + Number(caso.valor_a_pagar).toFixed(2) : '-'}</td>
+        <tr class="linha-clicavel" data-id="${caso.id}">
+          <td class="col-mono">${caso.id}</td>
+          <td>${caso.segurado || caso.nome_arquivo || '—'}</td>
+          <td class="col-mono">${caso.cpf_ccb || '—'}</td>
+          <td>${caso.parceiro || '—'}</td>
+          <td>${caso.fundo || '—'}</td>
+          <td>${caso.cia || '—'}</td>
+          <td class="col-num col-mono">${caso.numero_parcelas_cobertas_produto ?? '—'}</td>
+          <td class="col-num col-mono">${caso.valor_a_pagar != null ? fmtBRL(caso.valor_a_pagar) : '—'}</td>
+          <td class="col-num col-mono col-valor">${fmtBRL(caso.valor_a_pagar_final)}</td>
         </tr>
       `).join('');
 
-      document.getElementById('mensagem-vazia').style.display = casos.length === 0 ? 'block' : 'none';
+      const vazio = casos.length === 0;
+      document.getElementById('mensagem-vazia').style.display = vazio ? 'block' : 'none';
+      document.getElementById('rodape-tabela').innerHTML = vazio ? '' : `
+        <tr class="linha-total">
+          <td colspan="8">Total (${dados.quantidade} segurado${dados.quantidade === 1 ? '' : 's'})</td>
+          <td class="col-num col-mono">${fmtBRL(dados.total)}</td>
+        </tr>`;
 
-      const somaTotal = casos.reduce((soma, caso) => soma + (caso.valor_a_pagar !== null ? Number(caso.valor_a_pagar) : 0), 0);
-      document.getElementById('stat-total-pagar').textContent = 'R$ ' + somaTotal.toLocaleString('pt-BR', { minimumFractionDigits: 2 });
-      document.getElementById('stat-total-segurados').textContent = casos.length;
+      document.getElementById('stat-total-pagar').textContent = fmtBRL(dados.total);
+      document.getElementById('stat-total-sub').textContent = dados.quantidade + ' segurado' + (dados.quantidade === 1 ? '' : 's');
+      document.getElementById('stat-total-segurados').textContent = dados.quantidade;
+      document.getElementById('stat-total-parceiros').textContent = (dados.porParceiro || []).length;
+      document.getElementById('header-meta').textContent = 'Atualizado ' + new Date().toLocaleString('pt-BR');
+
+      document.getElementById('resumo-parceiros').innerHTML = (dados.porParceiro || [])
+        .sort((a, b) => b.total - a.total)
+        .map(g => `
+          <div class="resumo-chip">
+            <span class="resumo-chip-nome">${g.parceiro}</span>
+            <span class="resumo-chip-valor">${fmtBRL(g.total)}</span>
+            <span class="resumo-chip-qtd">${g.quantidade} caso${g.quantidade === 1 ? '' : 's'}</span>
+          </div>`).join('');
+
+      document.querySelectorAll('#tabela-pagar .linha-clicavel').forEach(linha => {
+        linha.addEventListener('click', () => { window.location.href = '/caso.html?id=' + linha.dataset.id; });
+      });
     }
 
     carregarPagarAgora();

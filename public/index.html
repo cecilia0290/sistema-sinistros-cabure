@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;650&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/estilo.css">
+  <script src="/formato.js"></script>
 </head>
 <body>
   <div class="app-layout">
@@ -19,14 +20,14 @@
           <div>
             <span class="eyebrow">Operação</span>
             <h1 class="page-title">Todos os casos</h1>
-            <p class="page-desc">Envie documentos de sinistro e acompanhe os casos processados automaticamente pelo motor de regras.</p>
+            <p class="page-desc">Envie documentos de sinistro e acompanhe os casos. A leitura é 100% local (OCR + regex + Dataprev). Para muitos de uma vez, use <a href="/lote.html">Upload em lote</a>.</p>
           </div>
         </div>
 
         <div class="card">
           <h3>Enviar documento</h3>
           <div class="upload-row">
-            <input type="file" id="arquivo" accept=".pdf,.docx,.zip,.jpg,.jpeg,.png">
+            <input type="file" id="arquivo" accept=".pdf,.docx,.zip,.jpg,.jpeg,.png,.json,.csv,.txt">
             <button id="btn-enviar" class="btn btn-primary">Enviar</button>
           </div>
           <div id="mensagem" class="mensagem-status"></div>
@@ -42,13 +43,22 @@
               <option value="AGUARDANDO DOC">AGUARDANDO DOC</option>
               <option value="EM CARÊNCIA / ANÁLISE">EM CARÊNCIA / ANÁLISE</option>
               <option value="NEGADO">NEGADO</option>
-              <option value="AGUARDANDO OCR MANUAL">AGUARDANDO OCR MANUAL</option>
+              <option value="AGUARDANDO CONFERÊNCIA MANUAL">AGUARDANDO CONFERÊNCIA MANUAL</option>
               <option value="PAGO">PAGO</option>
               <option value="CANCELADO">CANCELADO</option>
             </select>
           </label>
           <label>Parceiro
             <select id="filtro-parceiro"><option value="">Todos</option></select>
+          </label>
+          <label>Adicionado — de
+            <input type="date" id="filtro-criado-de">
+          </label>
+          <label>Adicionado — até
+            <input type="date" id="filtro-criado-ate">
+          </label>
+          <label class="check-linha" style="align-self:flex-end; padding-bottom:6px;">
+            <input type="checkbox" id="filtro-conferencia"> Só conferência manual
           </label>
         </div>
 
@@ -101,10 +111,12 @@
       { chave: 'carencia_dias', rotulo: 'Carência', tipo: 'numero' },
       { chave: 'franquia_data', rotulo: 'Franquia até', tipo: 'data' },
       { chave: 'cia', rotulo: 'CIA', tipo: 'texto' },
-      { chave: 'valor_a_pagar', rotulo: 'Valor a pagar', tipo: 'moeda' },
-      { chave: 'status', rotulo: 'Status', tipo: 'status', fixa: true }
+      { chave: 'data_upload', rotulo: 'Adicionado em', tipo: 'data' },
+      { chave: 'valor_a_pagar_final', rotulo: 'Valor a pagar', tipo: 'moeda' },
+      { chave: 'status', rotulo: 'Status', tipo: 'status', fixa: true },
+      { chave: 'motivo', rotulo: 'Motivo (negado / conferência)', tipo: 'motivo' }
     ];
-    const COLUNAS_PADRAO_VISIVEIS = ['id', 'segurado', 'cpf_ccb', 'parceiro', 'cobertura', 'data_evento', 'valor_a_pagar', 'status'];
+    const COLUNAS_PADRAO_VISIVEIS = ['id', 'segurado', 'cpf_ccb', 'parceiro', 'cobertura', 'data_evento', 'valor_a_pagar_final', 'status'];
     const CHAVE_COLUNAS_LOCALSTORAGE = 'cabure-colunas-visiveis';
     const TAMANHO_PAGINA = 25;
 
@@ -127,7 +139,8 @@
     function classeBadge(status) {
       const mapa = {
         'PRONTO PARA PAGAR': 'badge-sucesso', 'PAGO': 'badge-sucesso',
-        'EM FRANQUIA': 'badge-alerta', 'AGUARDANDO DOC': 'badge-alerta', 'AGUARDANDO OCR MANUAL': 'badge-alerta',
+        'EM FRANQUIA': 'badge-alerta', 'AGUARDANDO DOC': 'badge-alerta',
+        'AGUARDANDO OCR MANUAL': 'badge-alerta', 'AGUARDANDO CONFERÊNCIA MANUAL': 'badge-alerta',
         'EM CARÊNCIA / ANÁLISE': 'badge-info',
         'NOVO': 'badge-neutro',
         'NEGADO': 'badge-perigo', 'CANCELADO': 'badge-perigo'
@@ -135,14 +148,24 @@
       return mapa[status] || 'badge-neutro';
     }
 
+    function motivoDoCaso(caso) {
+      return caso.motivo_negacao || caso.motivo_conferencia || '';
+    }
+
     function formatarValor(caso, coluna) {
       const valor = caso[coluna.chave];
       if (coluna.chave === 'status') {
-        return `<span class="badge ${classeBadge(valor)}">${valor}</span>${caso.motivo_negacao ? '<span class="motivo-negacao">' + caso.motivo_negacao + '</span>' : ''}`;
+        const m = motivoDoCaso(caso);
+        return `<span class="badge ${classeBadge(valor)}">${valor}</span>${m ? '<span class="motivo-negacao">' + m + '</span>' : ''}`;
+      }
+      if (coluna.tipo === 'motivo') {
+        const m = motivoDoCaso(caso);
+        return m ? '<span class="motivo-cel">' + m + '</span>' : '<span style="color:var(--text-faint)">—</span>';
       }
       if (coluna.chave === 'segurado') return valor || caso.nome_arquivo;
+      if (coluna.chave === 'cpf_ccb') return Formato.formatarCpfCcb(valor);
       if (valor === null || valor === undefined || valor === '') return '<span style="color:var(--text-faint)">—</span>';
-      if (coluna.tipo === 'moeda') return 'R$ ' + Number(valor).toFixed(2);
+      if (coluna.tipo === 'moeda') return Formato.brl(valor);
       if (coluna.tipo === 'data') return new Date(valor).toLocaleDateString('pt-BR');
       return valor;
     }
@@ -206,13 +229,19 @@
     function aplicarFiltrosEBusca() {
       const status = document.getElementById('filtro-status').value;
       const parceiro = document.getElementById('filtro-parceiro').value;
+      const criadoDe = document.getElementById('filtro-criado-de').value;
+      const criadoAte = document.getElementById('filtro-criado-ate').value;
+      const soConferencia = document.getElementById('filtro-conferencia').checked;
       const busca = document.getElementById('busca').value.trim().toLowerCase();
 
       return casosTodos.filter(caso => {
         if (status && caso.status !== status) return false;
         if (parceiro && caso.parceiro !== parceiro) return false;
+        if (soConferencia && !Number(caso.conferencia_pendente)) return false;
+        if (criadoDe && (!caso.data_upload || caso.data_upload.slice(0, 10) < criadoDe)) return false;
+        if (criadoAte && (!caso.data_upload || caso.data_upload.slice(0, 10) > criadoAte)) return false;
         if (busca) {
-          const alvo = [caso.id, caso.segurado, caso.cpf_ccb, caso.parceiro, caso.cobertura, caso.cia, caso.nome_arquivo]
+          const alvo = [caso.id, caso.segurado, caso.cpf_ccb, caso.parceiro, caso.cobertura, caso.cia, caso.nome_arquivo, motivoDoCaso(caso)]
             .filter(Boolean).join(' ').toLowerCase();
           if (!alvo.includes(busca)) return false;
         }
@@ -242,8 +271,15 @@
       const busca = document.getElementById('busca').value.trim();
       const chips = [];
 
+      const criadoDe = document.getElementById('filtro-criado-de').value;
+      const criadoAte = document.getElementById('filtro-criado-ate').value;
+      const soConf = document.getElementById('filtro-conferencia').checked;
+
       if (status) chips.push({ rotulo: 'Status: ' + status, aoRemover: () => { document.getElementById('filtro-status').value = ''; } });
       if (parceiro) chips.push({ rotulo: 'Parceiro: ' + parceiro, aoRemover: () => { document.getElementById('filtro-parceiro').value = ''; } });
+      if (soConf) chips.push({ rotulo: 'Só conferência manual', aoRemover: () => { document.getElementById('filtro-conferencia').checked = false; } });
+      if (criadoDe) chips.push({ rotulo: 'Adicionado ≥ ' + criadoDe, aoRemover: () => { document.getElementById('filtro-criado-de').value = ''; } });
+      if (criadoAte) chips.push({ rotulo: 'Adicionado ≤ ' + criadoAte, aoRemover: () => { document.getElementById('filtro-criado-ate').value = ''; } });
       if (busca) chips.push({ rotulo: 'Busca: "' + busca + '"', aoRemover: () => { document.getElementById('busca').value = ''; } });
 
       const container = document.getElementById('chips-row');
@@ -300,14 +336,18 @@
       renderizar();
     }
 
-    // Lê ?status=... da URL (usado pelos links do menu lateral: Em análise, Pendentes, Pagos etc.)
+    // Lê ?status=... / ?conferencia=1 / ?cia=... da URL (links do menu lateral)
     const parametrosUrl = new URLSearchParams(window.location.search);
     if (parametrosUrl.get('status')) {
       document.getElementById('filtro-status').value = parametrosUrl.get('status');
     }
+    if (parametrosUrl.get('conferencia') === '1') {
+      document.getElementById('filtro-conferencia').checked = true;
+    }
 
-    document.getElementById('filtro-status').addEventListener('change', () => { paginaAtual = 1; renderizar(); });
-    document.getElementById('filtro-parceiro').addEventListener('change', () => { paginaAtual = 1; renderizar(); });
+    ['filtro-status', 'filtro-parceiro', 'filtro-criado-de', 'filtro-criado-ate'].forEach(id =>
+      document.getElementById(id).addEventListener('change', () => { paginaAtual = 1; renderizar(); }));
+    document.getElementById('filtro-conferencia').addEventListener('change', () => { paginaAtual = 1; renderizar(); });
     document.getElementById('busca').addEventListener('input', () => { paginaAtual = 1; renderizar(); });
     document.getElementById('btn-pagina-anterior').addEventListener('click', () => { paginaAtual--; renderizar(); });
     document.getElementById('btn-pagina-proxima').addEventListener('click', () => { paginaAtual++; renderizar(); });

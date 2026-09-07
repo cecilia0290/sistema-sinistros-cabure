@@ -10,6 +10,7 @@
   const iconeRelogio = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>';
   const iconeAlerta = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg>';
   const iconeExportar = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3v12M8 11l4 4 4-4"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>';
+  const iconeUpload = '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 15V3M8 7l4-4 4 4"/><path d="M4 15v4a2 2 0 002 2h12a2 2 0 002-2v-4"/></svg>';
 
   const q = (status) => '/index.html?status=' + encodeURIComponent(status);
 
@@ -32,20 +33,22 @@
       <div class="nav-section">Operação</div>
       <a class="${ativa('/index.html')}" href="/index.html">${iconeCasos}<span>Todos os casos</span></a>
       <a class="${ativa('/pagar-agora.html')}" href="/pagar-agora.html">${iconePagar}<span>Pagar agora</span></a>
+      <a class="${ativa('/lote.html')}" href="/lote.html">${iconeUpload}<span>Upload em lote</span></a>
+      <a class="${ativa('/conferencia.html')}" href="/conferencia.html">${iconeAlerta}<span>Conferência manual</span></a>
       <a class="nav-item" href="${q('EM CARÊNCIA / ANÁLISE')}">${iconeRelogio}<span>Em análise</span></a>
       <a class="nav-item" href="${q('AGUARDANDO DOC')}">${iconeAlerta}<span>Pendentes</span></a>
+
+      <div class="nav-section">Quem paga (interno)</div>
+      <a class="nav-item" href="/por-cia.html?cia=MetLife">${iconePagar}<span>MetLife paga</span></a>
+      <a class="nav-item" href="/por-cia.html?cia=Caburé">${iconePagar}<span>Caburé paga</span></a>
 
       <div class="nav-section">Encerrados</div>
       <a class="nav-item" href="${q('PAGO')}"><span>Pagos</span></a>
       <a class="nav-item" href="${q('CANCELADO')}"><span>Cancelados</span></a>
       <a class="nav-item" href="${q('NEGADO')}"><span>Negados</span></a>
 
-      <div class="nav-section">Organização</div>
-      <span class="nav-item disabled"><span>Parceiros</span><span class="nav-badge">em breve</span></span>
-      <span class="nav-item disabled"><span>Documentos</span><span class="nav-badge">em breve</span></span>
-
       <div class="nav-section">Análises</div>
-      <a class="nav-item" href="/exportar">${iconeExportar}<span>Exportar Excel</span></a>
+      <a class="${ativa('/exportar.html')}" href="/exportar.html">${iconeExportar}<span>Exportar Excel</span></a>
       <span class="nav-item disabled"><span>Relatórios</span><span class="nav-badge">em breve</span></span>
 
       <div class="nav-section">Configuração</div>

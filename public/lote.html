@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Upload em lote — Caburé Sinistros</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;650&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/estilo.css">
+</head>
+<body>
+  <div class="app-layout">
+    <div id="sidebar" class="sidebar"></div>
+    <div class="main-content">
+      <div class="page">
+        <div class="page-header">
+          <div>
+            <span class="eyebrow">Operação</span>
+            <h1 class="page-title">Upload em lote</h1>
+            <p class="page-desc">Envie uma <strong>pasta inteira</strong> (com uma subpasta por segurado) ou vários <strong>.zip</strong> de uma vez. Cada documento passa pelo OCR/regex local — sem custo de API.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Escolher arquivos</h3>
+          <div class="upload-row">
+            <label class="btn btn-secondary">Selecionar pasta
+              <input type="file" id="in-pasta" webkitdirectory directory multiple hidden>
+            </label>
+            <label class="btn btn-secondary">Selecionar arquivos / zips
+              <input type="file" id="in-arquivos" multiple hidden accept=".pdf,.docx,.jpg,.jpeg,.png,.json,.csv,.txt,.zip">
+            </label>
+            <button id="btn-enviar" class="btn btn-primary" disabled>Processar</button>
+          </div>
+          <div id="selecao" class="mensagem-status"></div>
+        </div>
+
+        <div class="card" id="painel-progresso" style="display:none;">
+          <h3>Progresso</h3>
+          <div class="progress-wrap"><div class="progress-bar" id="barra"></div></div>
+          <div class="progress-num" id="progresso-num">0 / 0</div>
+          <div class="lote-log" id="log"></div>
+        </div>
+
+        <div class="card" id="painel-resumo" style="display:none;">
+          <h3>Resumo</h3>
+          <div class="stat-grid" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));">
+            <div class="stat-card"><div class="stat-label">Documentos processados</div><div class="stat-value" id="r-proc">0</div></div>
+            <div class="stat-card"><div class="stat-label">Casos adicionados</div><div class="stat-value" id="r-novos">0</div></div>
+            <div class="stat-card"><div class="stat-label">Já existiam (duplicados)</div><div class="stat-value" id="r-dup">0</div></div>
+            <div class="stat-card"><div class="stat-label">Aguardando conferência</div><div class="stat-value" id="r-conf">0</div></div>
+            <div class="stat-card"><div class="stat-label">Erros</div><div class="stat-value" id="r-erro">0</div></div>
+          </div>
+          <div style="margin-top:12px;"><a class="btn btn-secondary" href="/index.html">Ver casos</a>
+            <a class="btn btn-secondary" href="/conferencia.html">Ir para conferência manual</a></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let arquivos = [];
+    const painelProg = document.getElementById('painel-progresso');
+    const painelRes = document.getElementById('painel-resumo');
+
+    function relPath(f) { return f.webkitRelativePath || f.name; }
+
+    function definir(lista) {
+      arquivos = [...lista];
+      document.getElementById('selecao').textContent = arquivos.length
+        ? `${arquivos.length} arquivo(s) selecionado(s).`
+        : '';
+      document.getElementById('btn-enviar').disabled = arquivos.length === 0;
+    }
+
+    document.getElementById('in-pasta').addEventListener('change', e => definir(e.target.files));
+    document.getElementById('in-arquivos').addEventListener('change', e => definir(e.target.files));
+
+    document.getElementById('btn-enviar').addEventListener('click', async () => {
+      if (!arquivos.length) return;
+      document.getElementById('btn-enviar').disabled = true;
+      painelRes.style.display = 'none';
+      painelProg.style.display = 'block';
+      document.getElementById('log').innerHTML = '';
+      document.getElementById('barra').style.width = '0%';
+
+      const fd = new FormData();
+      for (const f of arquivos) { fd.append('documentos', f, f.name); fd.append('caminhos', relPath(f)); }
+
+      const resp = await fetch('/upload-lote', { method: 'POST', body: fd });
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '', total = 0, feitos = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const linhas = buf.split('\n'); buf = linhas.pop();
+        for (const ln of linhas) {
+          if (!ln.trim()) continue;
+          const ev = JSON.parse(ln);
+          if (ev.tipo === 'inicio') { total = ev.total; }
+          else if (ev.tipo === 'item') {
+            feitos++;
+            const cls = ev.status === 'erro' ? 'log-erro' : (ev.status === 'conferencia' ? 'log-conf' : (ev.status === 'novo' ? 'log-ok' : 'log-dup'));
+            document.getElementById('log').insertAdjacentHTML('afterbegin',
+              `<div class="log-linha ${cls}"><span>${ev.nome}</span><span>${ev.status}${ev.qtd ? ' (' + ev.qtd + ')' : ''}${ev.motivo ? ' — ' + ev.motivo : ''}</span></div>`);
+            const pct = total ? Math.round(feitos / total * 100) : 0;
+            document.getElementById('barra').style.width = pct + '%';
+            document.getElementById('progresso-num').textContent = `${feitos} / ${total}`;
+          } else if (ev.tipo === 'resumo') {
+            document.getElementById('r-proc').textContent = ev.processados;
+            document.getElementById('r-novos').textContent = ev.novos;
+            document.getElementById('r-dup').textContent = ev.duplicados;
+            document.getElementById('r-conf').textContent = ev.conferencia;
+            document.getElementById('r-erro').textContent = ev.erros;
+            painelRes.style.display = 'block';
+          } else if (ev.tipo === 'fatal') {
+            document.getElementById('log').insertAdjacentHTML('afterbegin', `<div class="log-linha log-erro"><span>ERRO GERAL</span><span>${ev.erro}</span></div>`);
+          }
+        }
+      }
+      document.getElementById('btn-enviar').disabled = false;
+    });
+  </script>
+  <script src="/layout.js"></script>
+</body>
+</html>

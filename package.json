@@ -5,14 +5,14 @@
   "main": "db.js",
    "scripts": {
      "start": "node server.js",
-     "test": "echo \"Error: no test specified\" && exit 1"
+     "importar": "node importar-planilha.js",
+     "test": "node testes.js"
    },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.120.0",
     "adm-zip": "^0.6.0",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",

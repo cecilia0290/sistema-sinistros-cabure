@@ -9,15 +9,23 @@ const { PDFParse } = require('pdf-parse');
 const mammoth = require('mammoth');
 const AdmZip = require('adm-zip');
 const { createWorker } = require('tesseract.js');
-const Anthropic = require('@anthropic-ai/sdk');
 const pool = require('./db');
-const { calcularCaso, verificarElegibilidade, calcularCarencia, calcularFranquia } = require('./regras');
+const { calcularCaso, verificarElegibilidade, calcularCarencia, calcularFranquia, normalizarParceiro } = require('./regras');
+const { chavesIdentidade, formatarCpfCcb, analisarCpfCcb } = require('./identidade');
+const { extrairCamposLocal } = require('./extracao');
 const XLSX = require('xlsx');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// Status de casos que dependem de ação humana (Seção 6 — legenda)
+const STATUS_CONFERENCIA = 'AGUARDANDO CONFERÊNCIA MANUAL';
+
+// Extensões de documento que o pipeline local sabe ler
+const EXTENSOES_DOC = ['.pdf', '.docx', '.jpg', '.jpeg', '.png', '.json', '.csv', '.txt'];
+
+// undefined -> null (mysql2 recusa undefined em parâmetro)
+const v = (x) => (x === undefined ? null : x);
 
 app.use(express.json());
 app.use(session({
@@ -35,7 +43,7 @@ function exigirLogin(req, res, next) {
   if (rotasLivres.includes(req.path)) return next();
 
   const ehChamadaDeApi = req.path.startsWith('/api/') || req.path === '/upload' ||
-    req.path === '/casos' || req.path === '/exportar';
+    req.path === '/upload-lote' || req.path === '/casos' || req.path === '/exportar';
   if (ehChamadaDeApi) {
     return res.status(401).json({ erro: 'Sessão expirada ou não autenticado. Faça login novamente.' });
   }
@@ -83,21 +91,28 @@ app.get('/api/me', (req, res) => {
 app.use(exigirLogin);
 app.use(express.static('public'));
 
+if (!fs.existsSync('uploads')) fs.mkdirSync('uploads');
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, 'uploads/'),
-  filename: (req, file, cb) => cb(null, Date.now() + '-' + file.originalname)
+  filename: (req, file, cb) =>
+    cb(null, Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '-' + path.basename(file.originalname))
 });
 const upload = multer({ storage });
 
-// --- Extração de texto bruto ---
+// --- Extração de texto bruto (100% local, sem API paga) ---
 
+// OCR com Tesseract (open-source, roda no servidor). Devolve texto + confiança 0-100.
 async function ocrImagem(caminhoArquivo) {
   const worker = await createWorker('por');
-  const { data } = await worker.recognize(caminhoArquivo);
-  await worker.terminate();
-  return data.text;
+  try {
+    const { data } = await worker.recognize(caminhoArquivo);
+    return { texto: data.text || '', confianca: typeof data.confidence === 'number' ? data.confidence : null };
+  } finally {
+    await worker.terminate();
+  }
 }
 
+// Retorno: { texto, ocrConfianca (0-100|null), precisaOcrManual }
 async function extrairTextoDeArquivo(caminhoArquivo) {
   const extensao = path.extname(caminhoArquivo).toLowerCase();
 
@@ -106,94 +121,62 @@ async function extrairTextoDeArquivo(caminhoArquivo) {
     const parser = new PDFParse({ data: bufferArquivo });
     const dadosPdf = await parser.getText();
     const texto = dadosPdf.text || '';
-    if (texto.trim().length < 50) return { texto: '', precisaOcrManual: true };
-    return { texto, precisaOcrManual: false };
+    // PDF digital: texto direto. PDF escaneado (sem texto): não há rasterização
+    // pura-JS confiável -> vai para conferência manual.
+    if (texto.trim().length < 50) return { texto: '', ocrConfianca: null, precisaOcrManual: true };
+    return { texto, ocrConfianca: null, precisaOcrManual: false };
   }
 
   if (extensao === '.docx') {
     const resultado = await mammoth.extractRawText({ path: caminhoArquivo });
-    return { texto: resultado.value, precisaOcrManual: false };
+    return { texto: resultado.value, ocrConfianca: null, precisaOcrManual: false };
   }
 
   if (extensao === '.jpg' || extensao === '.jpeg' || extensao === '.png') {
-    const texto = await ocrImagem(caminhoArquivo);
-    return { texto, precisaOcrManual: false };
+    const { texto, confianca } = await ocrImagem(caminhoArquivo);
+    return { texto, ocrConfianca: confianca, precisaOcrManual: false };
   }
 
-  return { texto: `[Arquivo com extensão ${extensao} não pôde ser lido automaticamente nesta etapa]`, precisaOcrManual: false };
+  if (extensao === '.json' || extensao === '.csv' || extensao === '.txt') {
+    return { texto: fs.readFileSync(caminhoArquivo, 'utf8'), ocrConfianca: null, precisaOcrManual: false };
+  }
+
+  return { texto: `[Arquivo com extensão ${extensao} não pôde ser lido automaticamente]`, ocrConfianca: null, precisaOcrManual: false };
 }
 
-// --- Extração estruturada por IA ---
-
-const MAX_CARACTERES_PARA_IA = 600000; // ~150 mil tokens, margem de seguranca abaixo do limite do modelo (200 mil tokens)
-
-async function extrairCamposComIA(textoDocumento) {
-  const textoParaAnalise = textoDocumento.length > MAX_CARACTERES_PARA_IA
-    ? textoDocumento.slice(0, MAX_CARACTERES_PARA_IA) + '\n\n[AVISO: texto truncado por ser muito extenso — apenas a primeira parte foi analisada. Revisar manualmente se necessario.]'
-    : textoDocumento;
-
-  const prompt = `Você vai ler o texto de um documento de sinistro de seguro (perda de renda / seguro prestamista).
-Extraia APENAS os campos abaixo, exatamente como aparecem no texto. Não calcule nada, não deduza nada que não esteja explícito.
-Se um campo não existir no texto, devolva null para ele.
-
-Atenção especial ao campo "cobertura": documentos como "Anexo I", "Termo de Seguro" ou "Apólice" costumam ter uma seção chamada
-"Cobertura Capital Segurado" ou "Cobertura Contratada", geralmente em formato de tabela (o texto pode sair desorganizado da
-extração do PDF). Procure por termos como "Perda de Renda", "Morte", "Invalidez" nesse tipo de seção — se encontrar "Perda de
-Renda" mencionado como uma cobertura contratada, use "Perda de Renda" como valor do campo cobertura, mesmo que o texto ao
-redor esteja com formatação estranha.
-
-Responda SOMENTE com um JSON válido, sem nenhum texto antes ou depois, no formato exato:
-
-{
-  "segurado": "nome completo da pessoa segurada, ou null",
-  "cpf_ccb": "CPF ou número da Cédula de Crédito Bancário, ou null",
-  "parceiro": "nome do parceiro financeiro (ex: SETHI, POUPACRED, GRANATECH, X3, Invest All, Fintech Corban, Nova, Resgata), ou null",
-  "fundo": "nome do fundo/instituição relacionada (ex: GUARDIAN), ou null",
-  "cobertura": "tipo de cobertura do sinistro, ou null",
-  "data_contratacao": "data da contratação do seguro no formato AAAA-MM-DD, ou null",
-  "data_evento": "data do desligamento/evento gerador do sinistro no formato AAAA-MM-DD, ou null",
-  "data_admissao": "data de admissão no vínculo empregatício, no formato AAAA-MM-DD, ou null",
-  "motivo_desligamento_codigo": "código numérico do motivo do desligamento, como texto, ou null",
-  "valor_parcela": "valor numérico da PARCELA DO EMPRÉSTIMO/CCB, ou null",
-  "limite_beneficio": "valor numérico do limite TOTAL do benefício do seguro, ou null",
-  "numero_parcelas_contratadas": "número inteiro de parcelas do EMPRÉSTIMO/CCB, ou null",
-  "teto_parcela_produto": "valor numérico do teto de CADA parcela do SEGURO (não confundir com parcela do empréstimo), ou null",
-  "numero_parcelas_cobertas_produto": "número inteiro de parcelas que o SEGURO cobre, ou null",
-  "fonte_produto": "nome do documento onde você confirmou o teto/parcelas do seguro, ou null"
-}
-
-Texto do documento:
-"""
-${textoParaAnalise}
-"""`;
-
-  const resposta = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5-20250929',
-    max_tokens: 1000,
-    messages: [{ role: 'user', content: prompt }]
-  });
-
-  const textoResposta = resposta.content[0].text.trim();
-  const jsonLimpo = textoResposta.replace(/```json|```/g, '').trim();
-  return JSON.parse(jsonLimpo);
-}
+// A extração estruturada é feita 100% localmente por ./extracao.js
+// (Dataprev estruturado + regex por parceiro sobre texto/OCR). Sem IA, sem custo.
 
 // --- Vínculo entre documentos (Seção 7.3) ---
 
-function normalizarCpfCcb(valor) {
-  if (!valor) return null;
-  const limpo = String(valor).replace(/[^a-zA-Z0-9]/g, '');
-  return limpo.length > 0 ? limpo : null;
-}
+// Vincula um documento a um caso já existente.
+//  - doc com CPF + CCB  -> casa o par exato (mesmo empréstimo)
+//  - doc só com CPF     -> casa só se houver EXATAMENTE 1 caso desse CPF (senão fica ambíguo)
+//  - doc só com CCB     -> casa pelo CCB
+async function buscarCasoPorCpfCcb(cpfCcbBruto, nome) {
+  const { cpf, ccbs } = analisarCpfCcb(cpfCcbBruto);
+  const [linhas] = await pool.query('SELECT id, identidade_chaves FROM casos WHERE identidade_chaves IS NOT NULL');
+  const casos = linhas.map(l => {
+    let chaves = [];
+    try { chaves = JSON.parse(l.identidade_chaves) || []; } catch (e) { /* ignora */ }
+    return { id: l.id, chaves };
+  });
 
-async function buscarCasoPorCpfCcb(cpfCcbNormalizado) {
-  if (!cpfCcbNormalizado) return null;
-  const [linhas] = await pool.query(
-    `SELECT id FROM casos
-     WHERE REPLACE(REPLACE(REPLACE(cpf_ccb, '.', ''), '-', ''), '/', '') = ?`,
-    [cpfCcbNormalizado]
-  );
-  return linhas.length > 0 ? linhas[0].id : null;
+  if (cpf && ccbs.length) {
+    const alvo = ccbs.map(c => 'cpf:' + cpf + '|ccb:' + c);
+    const m = casos.find(c => c.chaves.some(k => alvo.includes(k)));
+    if (m) return m.id;
+  }
+  if (cpf) {
+    const doCpf = casos.filter(c => c.chaves.some(k => k === 'cpf:' + cpf || k.startsWith('cpf:' + cpf + '|')));
+    if (doCpf.length === 1) return doCpf[0].id;
+    return null; // 0 casos, ou ambíguo (vários empréstimos do mesmo CPF)
+  }
+  if (ccbs.length) {
+    const m = casos.find(c => c.chaves.some(k => ccbs.some(cc => k.endsWith('ccb:' + cc))));
+    if (m) return m.id;
+  }
+  return null;
 }
 
 // --- Histórico / auditoria (Seção 4 e 8) ---
@@ -209,14 +192,32 @@ async function registrarHistorico(casoId, campo, valorAnterior, valorNovo, usuar
   );
 }
 
-async function processarUnidadeDocumental(nomeReferencia, textoExtraido, precisaOcrManual) {
-  let campos = null;
-  if (textoExtraido && textoExtraido.trim().length >= 10) {
-    campos = await extrairCamposComIA(textoExtraido);
-  }
+// Lê UM arquivo já salvo em disco e roda a extração local nele.
+// -> { nome, texto, precisaOcrManual, extracao|null }
+async function lerParteDocumental(caminho, nomeOriginal) {
+  const extensao = path.extname(nomeOriginal || caminho).toLowerCase();
+  const { texto, ocrConfianca, precisaOcrManual } = await extrairTextoDeArquivo(caminho);
+  const extracao = (texto && texto.trim().length >= 10 && !precisaOcrManual)
+    ? extrairCamposLocal({ nomeArquivo: nomeOriginal, texto, extensao, ocrConfianca })
+    : null;
+  return { nome: nomeOriginal, texto: texto || '', precisaOcrManual: !!precisaOcrManual, extracao };
+}
 
-  const cpfNormalizado = campos ? normalizarCpfCcb(campos.cpf_ccb) : null;
-  const casoExistenteId = await buscarCasoPorCpfCcb(cpfNormalizado);
+// `partes`: [{ nome, texto, precisaOcrManual, extracao }] — um por documento do MESMO segurado.
+async function processarUnidadeDocumental(nomeReferencia, partes) {
+  const textoExtraido = partes.map(p => `--- ${p.nome} ---\n${p.texto || ''}`).join('\n\n').trim();
+  const precisaOcrManual = partes.some(p => p.precisaOcrManual);
+  const extraida = mesclarExtracoes(partes.map(p => p.extracao));
+  const campos = Object.keys(extraida.campos || {}).length ? extraida.campos : null;
+
+  // Precisa de conferência humana? (campo obrigatório ilegível, OCR ruim, PDF escaneado…)
+  let conferencia = precisaOcrManual || extraida.precisaConferencia;
+  let motivoConf = null;
+  if (precisaOcrManual) motivoConf = 'PDF escaneado sem texto — precisa conferência manual (converta para imagem para tentar OCR).';
+  else if (extraida.precisaConferencia) motivoConf = extraida.motivoConferencia;
+  if (!campos) { conferencia = true; motivoConf = motivoConf || 'Documento sem texto legível — precisa conferência manual.'; }
+
+  const casoExistenteId = campos ? await buscarCasoPorCpfCcb(campos.cpf_ccb, campos.segurado) : null;
 
   let casoId;
   let eraNovo;
@@ -229,9 +230,16 @@ async function processarUnidadeDocumental(nomeReferencia, textoExtraido, precisa
       `\n\n--- Documento adicional: ${nomeReferencia} ---\n` + textoExtraido;
     await pool.query('UPDATE casos SET texto_extraido = ? WHERE id = ?', [textoCombinado, casoId]);
   } else {
+    const chavesIniciais = campos ? chavesIdentidade(campos.cpf_ccb, campos.segurado) : [];
     const [resultado] = await pool.query(
-      'INSERT INTO casos (nome_arquivo, texto_extraido, status) VALUES (?, ?, ?)',
-      [nomeReferencia, textoExtraido, precisaOcrManual ? 'AGUARDANDO OCR MANUAL' : 'NOVO']
+      `INSERT INTO casos (nome_arquivo, texto_extraido, status, origem, identidade_chaves,
+                          tipo_documento, conferencia_pendente, motivo_conferencia)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        nomeReferencia, textoExtraido, conferencia ? STATUS_CONFERENCIA : 'NOVO', 'DOCUMENTO',
+        chavesIniciais.length ? JSON.stringify(chavesIniciais) : null,
+        extraida ? extraida.tipoDoc : null, conferencia ? 1 : 0, motivoConf
+      ]
     );
     casoId = resultado.insertId;
     eraNovo = true;
@@ -239,14 +247,21 @@ async function processarUnidadeDocumental(nomeReferencia, textoExtraido, precisa
 
   await pool.query(
     'INSERT INTO documentos (caso_id, nome_arquivo, status_processamento, texto_extraido) VALUES (?, ?, ?, ?)',
-    [casoId, nomeReferencia, precisaOcrManual ? 'AGUARDANDO OCR MANUAL' : 'PROCESSADO', textoExtraido]
+    [casoId, nomeReferencia, conferencia ? 'AGUARDANDO CONFERÊNCIA' : 'PROCESSADO', textoExtraido]
   );
 
   if (campos) {
     await pool.query(
-      'INSERT INTO extracoes_ia (caso_id, json_extraido) VALUES (?, ?)',
-      [casoId, JSON.stringify(campos)]
+      'INSERT INTO extracoes_ia (caso_id, json_extraido, confianca_json, fonte) VALUES (?, ?, ?, ?)',
+      [casoId, JSON.stringify(campos), JSON.stringify(extraida.confianca || {}), extraida.fonte || null]
     );
+
+    if (conferencia) {
+      await pool.query(
+        'UPDATE casos SET conferencia_pendente = 1, motivo_conferencia = ?, tipo_documento = COALESCE(?, tipo_documento) WHERE id = ?',
+        [motivoConf, extraida ? extraida.tipoDoc : null, casoId]
+      );
+    }
 
     await pool.query(
       `UPDATE casos SET
@@ -261,18 +276,30 @@ async function processarUnidadeDocumental(nomeReferencia, textoExtraido, precisa
         fonte_produto = COALESCE(?, fonte_produto)
        WHERE id = ?`,
       [
-        campos.segurado, campos.cpf_ccb, campos.parceiro, campos.fundo, campos.cobertura,
-        campos.data_contratacao, campos.data_evento, campos.data_admissao, campos.motivo_desligamento_codigo,
-        campos.valor_parcela, campos.limite_beneficio, campos.numero_parcelas_contratadas,
-        campos.teto_parcela_produto, campos.numero_parcelas_cobertas_produto, campos.fonte_produto,
+        v(campos.segurado), v(campos.cpf_ccb), v(campos.parceiro), v(campos.fundo), v(campos.cobertura),
+        v(campos.data_contratacao), v(campos.data_evento), v(campos.data_admissao), v(campos.motivo_desligamento_codigo),
+        v(campos.valor_parcela), v(campos.limite_beneficio), v(campos.numero_parcelas_contratadas),
+        v(campos.teto_parcela_produto), v(campos.numero_parcelas_cobertas_produto), v(campos.fonte_produto),
         casoId
       ]
     );
+
+    // Recalcula as chaves de identidade, o nome canônico do parceiro e o texto
+    // do CPF/CCB a partir da linha já combinada (pode ter mudado com este doc).
+    const [linhaAtual] = await pool.query('SELECT cpf_ccb, segurado, parceiro FROM casos WHERE id = ?', [casoId]);
+    if (linhaAtual.length) {
+      const row = linhaAtual[0];
+      const chaves = chavesIdentidade(row.cpf_ccb, row.segurado);
+      await pool.query(
+        'UPDATE casos SET identidade_chaves = ?, parceiro = COALESCE(?, parceiro), cpf_ccb = COALESCE(?, cpf_ccb) WHERE id = ?',
+        [chaves.length ? JSON.stringify(chaves) : null, normalizarParceiro(row.parceiro), formatarCpfCcb(row.cpf_ccb), casoId]
+      );
+    }
   }
 
-  await aplicarMotorDeRegras(casoId, 'Sistema (IA + motor de regras)');
+  await aplicarMotorDeRegras(casoId, 'Sistema (extração local + motor de regras)');
 
-  return { casoId, eraNovo };
+  return { casoId, eraNovo, conferencia: !!conferencia, motivoConferencia: motivoConf, tipoDoc: extraida.tipoDoc };
 }
 
 // Roda o motor de regras, e registra em "historico" qualquer mudança de status ou valor a pagar
@@ -282,16 +309,35 @@ async function aplicarMotorDeRegras(casoId, usuario) {
   const casoAntes = linhas[0];
   const resultado = calcularCaso(casoAntes);
 
-  await registrarHistorico(casoId, 'status', casoAntes.status, resultado.status, usuario);
+  // Enquanto o caso aguarda conferência humana, o STATUS fica travado nessa
+  // etiqueta — o motor continua calculando carência/franquia/valor para exibição.
+  const statusFinal = casoAntes.conferencia_pendente ? STATUS_CONFERENCIA : resultado.status;
+  const motivoFinal = casoAntes.conferencia_pendente ? (casoAntes.motivo_conferencia || resultado.motivoNegacao) : resultado.motivoNegacao;
+
+  await registrarHistorico(casoId, 'status', casoAntes.status, statusFinal, usuario);
   await registrarHistorico(casoId, 'valor_a_pagar', casoAntes.valor_a_pagar, resultado.valorAPagar, usuario);
+
+  // Coluna única que Dashboard / Pagar agora / gráficos usam: o valor da planilha
+  // manda; na falta dele, o total calculado pelo motor. Um campo, um filtro.
+  const temPlanilha = casoAntes.valor_a_pagar_planilha !== null && casoAntes.valor_a_pagar_planilha !== undefined;
+  const valorFinal = temPlanilha
+    ? Number(casoAntes.valor_a_pagar_planilha)
+    : (resultado.valorTotalAPagar !== null ? resultado.valorTotalAPagar : resultado.valorAPagar);
 
   await pool.query(
     `UPDATE casos SET
-      carencia_dias = ?, franquia_data = ?, cia = ?, valor_a_pagar = ?, status = ?, motivo_negacao = ?
+      carencia_dias = ?, franquia_data = ?, cia = ?,
+      valor_a_pagar = ?, valor_total_a_pagar = ?, valor_a_pagar_final = ?,
+      numero_parcelas_cobertas_produto = COALESCE(?, numero_parcelas_cobertas_produto),
+      teto_parcela_produto = COALESCE(?, teto_parcela_produto),
+      parceiro = COALESCE(?, parceiro),
+      status = ?, motivo_negacao = ?
      WHERE id = ?`,
     [
-      resultado.carenciaDias, resultado.franquiaData, resultado.cia, resultado.valorAPagar,
-      resultado.status, resultado.motivoNegacao, casoId
+      resultado.carenciaDias, resultado.franquiaData, resultado.cia,
+      resultado.valorAPagar, resultado.valorTotalAPagar, valorFinal,
+      resultado.parcelasCobertas, resultado.tetoParcelaProduto, resultado.parceiroCanonico,
+      statusFinal, motivoFinal, casoId
     ]
   );
 }
@@ -316,53 +362,31 @@ async function processarZip(caminhoZip) {
   });
 
   const resultados = [];
-  const extensoesAceitas = ['.pdf', '.docx', '.jpg', '.jpeg', '.png'];
-
   for (const nomeDaPasta of Object.keys(pastasPorNome)) {
-    let textoAcumulado = '';
-    let algumPrecisaOcrManual = false;
-
+    const partes = [];
     for (const entrada of pastasPorNome[nomeDaPasta]) {
       const extensao = path.extname(entrada.entryName).toLowerCase();
-      if (!extensoesAceitas.includes(extensao)) continue;
-
+      if (!EXTENSOES_DOC.includes(extensao)) continue;
       const caminhoTemporario = path.join('uploads', Date.now() + '-' + path.basename(entrada.entryName));
       fs.writeFileSync(caminhoTemporario, entrada.getData());
-
-      const resultadoExtracao = await extrairTextoDeArquivo(caminhoTemporario);
-      if (resultadoExtracao.precisaOcrManual) algumPrecisaOcrManual = true;
-      textoAcumulado += `\n\n--- ${entrada.entryName} ---\n` + resultadoExtracao.texto;
-
-      fs.unlinkSync(caminhoTemporario);
+      try {
+        partes.push(await lerParteDocumental(caminhoTemporario, entrada.entryName));
+      } finally {
+        fs.unlinkSync(caminhoTemporario);
+      }
     }
-
-    // Se, depois de filtrar por extensao aceita, sobrou texto vazio (ex.: a pasta so tinha uma
-    // planilha .xlsx solta ou outro arquivo que ainda nao sabemos ler), nao cria um caso fantasma.
-    if (textoAcumulado.trim().length === 0) continue;
-
-    const resultado = await processarUnidadeDocumental(nomeDaPasta, textoAcumulado.trim(), algumPrecisaOcrManual);
-    resultados.push(resultado);
+    if (partes.length === 0 || partes.every(p => !p.texto.trim())) continue;
+    resultados.push(await processarUnidadeDocumental(nomeDaPasta, partes));
   }
-
   return resultados;
-}
-
-async function criarCaso(nomeArquivoOuPasta, textoExtraido, status) {
-  const [resultado] = await pool.query(
-    'INSERT INTO casos (nome_arquivo, texto_extraido, status) VALUES (?, ?, ?)',
-    [nomeArquivoOuPasta, textoExtraido, status]
-  );
-  return resultado.insertId;
 }
 
 // --- Rotas ---
 
+// Upload de UM arquivo (ou um .zip com pastas por segurado).
 app.post('/upload', upload.single('documento'), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ erro: 'Nenhum arquivo foi enviado.' });
-    }
-
+    if (!req.file) return res.status(400).json({ erro: 'Nenhum arquivo foi enviado.' });
     const caminhoArquivo = req.file.path;
     const extensao = path.extname(req.file.originalname).toLowerCase();
 
@@ -370,39 +394,119 @@ app.post('/upload', upload.single('documento'), async (req, res) => {
       const resultados = await processarZip(caminhoArquivo);
       const criados = resultados.filter(r => r.eraNovo).length;
       const atualizados = resultados.filter(r => !r.eraNovo).length;
+      const conferencia = resultados.filter(r => r.conferencia).length;
       return res.json({
-        mensagem: `ZIP processado com sucesso. ${criados} caso(s) novo(s), ${atualizados} caso(s) atualizado(s).`,
+        mensagem: `ZIP processado. ${criados} caso(s) novo(s), ${atualizados} atualizado(s), ${conferencia} em conferência manual.`,
         ids: resultados.map(r => r.casoId)
       });
     }
 
-    const extensoesAceitas = ['.pdf', '.docx', '.jpg', '.jpeg', '.png'];
-    if (extensoesAceitas.includes(extensao)) {
-      const resultadoExtracao = await extrairTextoDeArquivo(caminhoArquivo);
-      const resultado = await processarUnidadeDocumental(
-        req.file.originalname, resultadoExtracao.texto, resultadoExtracao.precisaOcrManual
-      );
-      const mensagem = resultado.eraNovo
-        ? 'Caso novo criado com sucesso.'
-        : 'Documento vinculado a um caso já existente (mesmo CPF/CCB).';
-      return res.json({ id: resultado.casoId, mensagem });
+    if (EXTENSOES_DOC.includes(extensao)) {
+      const parte = await lerParteDocumental(caminhoArquivo, req.file.originalname);
+      const resultado = await processarUnidadeDocumental(req.file.originalname, [parte]);
+      const mensagem = resultado.conferencia
+        ? 'Documento recebido, mas caiu em CONFERÊNCIA MANUAL: ' + (resultado.motivoConferencia || '')
+        : (resultado.eraNovo ? 'Caso novo criado com sucesso.' : 'Documento vinculado a um caso já existente (mesmo CPF+CCB).');
+      return res.json({ id: resultado.casoId, mensagem, conferencia: !!resultado.conferencia });
     }
 
-    return res.status(400).json({ erro: 'Formato de arquivo não suportado nesta etapa (use PDF, DOCX, ZIP, JPG ou PNG).' });
-
+    return res.status(400).json({ erro: 'Formato não suportado (use PDF, DOCX, JPG, PNG, JSON, CSV, TXT ou ZIP).' });
   } catch (erro) {
     console.error(erro);
     res.status(500).json({ erro: 'Falha ao processar o arquivo: ' + erro.message });
+  } finally {
+    if (req.file && fs.existsSync(req.file.path)) { try { fs.unlinkSync(req.file.path); } catch (e) {} }
+  }
+});
+
+// Upload EM LOTE: pasta inteira (input webkitdirectory) e/ou vários .zip de uma vez.
+// Responde em NDJSON — uma linha por item processado + uma linha final de resumo —
+// para a tela mostrar o progresso em tempo real.
+app.post('/upload-lote', upload.array('documentos', 5000), async (req, res) => {
+  res.setHeader('Content-Type', 'application/x-ndjson; charset=utf-8');
+  const envia = (obj) => res.write(JSON.stringify(obj) + '\n');
+  const arquivos = req.files || [];
+  const caminhosRelativos = [].concat(req.body.caminhos || []); // um por arquivo, na mesma ordem
+  const resumo = { processados: 0, novos: 0, duplicados: 0, conferencia: 0, erros: 0, total: 0 };
+
+  try {
+    // Agrupa por "pasta do segurado": penúltimo segmento do caminho relativo; se não
+    // houver, cada arquivo é a sua própria unidade. .zip é expandido à parte.
+    const grupos = new Map(); // chave -> [{ caminho, nome }]
+    const zips = [];
+    arquivos.forEach((f, i) => {
+      const rel = (caminhosRelativos[i] || f.originalname || '').replace(/\\/g, '/');
+      const ext = path.extname(rel || f.originalname).toLowerCase();
+      if (ext === '.zip') { zips.push(f); return; }
+      if (!EXTENSOES_DOC.includes(ext)) return;
+      const partesCaminho = rel.split('/').filter(Boolean);
+      const chave = partesCaminho.length >= 2 ? partesCaminho[partesCaminho.length - 2] : (f.originalname + '#' + i);
+      if (!grupos.has(chave)) grupos.set(chave, []);
+      grupos.get(chave).push({ caminho: f.path, nome: rel || f.originalname });
+    });
+
+    resumo.total = grupos.size + zips.length;
+    envia({ tipo: 'inicio', total: resumo.total });
+
+    for (const [chave, itens] of grupos) {
+      try {
+        const partes = [];
+        for (const it of itens) partes.push(await lerParteDocumental(it.caminho, it.nome));
+        if (partes.every(p => !p.texto.trim())) {
+          resumo.erros++; envia({ tipo: 'item', nome: chave, status: 'erro', motivo: 'sem texto legível' });
+        } else {
+          const r = await processarUnidadeDocumental(chave, partes);
+          resumo.processados++;
+          if (r.conferencia) resumo.conferencia++;
+          else if (r.eraNovo) resumo.novos++;
+          else resumo.duplicados++;
+          envia({ tipo: 'item', nome: chave, casoId: r.casoId,
+            status: r.conferencia ? 'conferencia' : (r.eraNovo ? 'novo' : 'duplicado'),
+            motivo: r.conferencia ? r.motivoConferencia : null });
+        }
+      } catch (e) {
+        resumo.erros++; envia({ tipo: 'item', nome: chave, status: 'erro', motivo: e.message });
+      }
+    }
+
+    for (const zf of zips) {
+      try {
+        const resultados = await processarZip(zf.path);
+        for (const r of resultados) {
+          resumo.processados++;
+          if (r.conferencia) resumo.conferencia++;
+          else if (r.eraNovo) resumo.novos++;
+          else resumo.duplicados++;
+        }
+        envia({ tipo: 'item', nome: zf.originalname, status: 'zip', qtd: resultados.length });
+      } catch (e) {
+        resumo.erros++; envia({ tipo: 'item', nome: zf.originalname, status: 'erro', motivo: e.message });
+      }
+    }
+
+    envia({ tipo: 'resumo', ...resumo });
+    res.end();
+  } catch (erro) {
+    console.error(erro);
+    envia({ tipo: 'fatal', erro: erro.message });
+    res.end();
+  } finally {
+    for (const f of arquivos) { if (f.path && fs.existsSync(f.path)) { try { fs.unlinkSync(f.path); } catch (e) {} } }
   }
 });
 
 app.get('/casos', async (req, res) => {
   try {
-    const { status, parceiro } = req.query;
+    const { status, parceiro, fundo, cia, conferencia, criado_de, criado_ate } = req.query;
     let query = 'SELECT * FROM casos WHERE 1=1';
     const parametros = [];
     if (status) { query += ' AND status = ?'; parametros.push(status); }
     if (parceiro) { query += ' AND parceiro = ?'; parametros.push(parceiro); }
+    if (fundo) { query += ' AND fundo = ?'; parametros.push(fundo); }
+    if (cia) { query += ' AND cia = ?'; parametros.push(cia); }
+    if (conferencia === '1') { query += ' AND conferencia_pendente = 1'; }
+    if (criado_de) { query += ' AND data_upload >= ?'; parametros.push(criado_de + ' 00:00:00'); }
+    if (criado_ate) { query += ' AND data_upload <= ?'; parametros.push(criado_ate + ' 23:59:59'); }
     query += ' ORDER BY id DESC';
 
     const [linhas] = await pool.query(query, parametros);
@@ -472,42 +576,67 @@ app.get('/api/historico/:casoId', async (req, res) => {
   }
 });
 
+// FONTE ÚNICA DA VERDADE para "pronto pra pagar": a coluna CASOS A PAGAR da
+// planilha (casos_a_pagar = 1). O campo STATUS é só etiqueta e NÃO entra aqui.
+// Dashboard, "Pagar agora" e os 4 gráficos leem exatamente este mesmo critério
+// e a mesma coluna de valor (valor_a_pagar_final) — por isso os totais batem.
+const CRITERIO_A_PAGAR = 'casos_a_pagar = 1';
+
 app.get('/api/dashboard', async (req, res) => {
   try {
-    const [porStatus] = await pool.query('SELECT status, COUNT(*) AS quantidade FROM casos GROUP BY status');
-    const [porParceiro] = await pool.query(
-      'SELECT parceiro, COUNT(*) AS quantidade FROM casos WHERE parceiro IS NOT NULL GROUP BY parceiro'
+    const [[{ total: totalCasos }]] = await pool.query('SELECT COUNT(*) AS total FROM casos');
+
+    const [porStatus] = await pool.query(
+      'SELECT COALESCE(status, \'(sem status)\') AS status, COUNT(*) AS quantidade FROM casos GROUP BY status ORDER BY quantidade DESC'
     );
-    const [valorPorParceiro] = await pool.query(
-      `SELECT parceiro, COALESCE(SUM(valor_a_pagar), 0) AS total
-       FROM casos WHERE parceiro IS NOT NULL AND valor_a_pagar IS NOT NULL
-       GROUP BY parceiro`
+    const [porParceiro] = await pool.query(
+      `SELECT COALESCE(parceiro, '—') AS parceiro, COUNT(*) AS quantidade
+       FROM casos WHERE parceiro IS NOT NULL AND parceiro <> ''
+       GROUP BY parceiro ORDER BY quantidade DESC`
     );
     const [porMes] = await pool.query(
-      `SELECT DATE_FORMAT(data_upload, '%Y-%m') AS mes, COUNT(*) AS quantidade
-       FROM casos GROUP BY mes ORDER BY mes ASC`
-    );
-    const [totalAPagarLinhas] = await pool.query(
-      "SELECT COALESCE(SUM(valor_a_pagar), 0) AS total FROM casos WHERE status = 'PRONTO PARA PAGAR'"
+      `SELECT mes_ano_contratacao AS mes, COUNT(*) AS quantidade
+       FROM casos WHERE mes_ano_contratacao IS NOT NULL AND mes_ano_contratacao <> ''
+       GROUP BY mes_ano_contratacao ORDER BY mes_ano_contratacao ASC`
     );
 
-    // Contagens específicas para os cartões do dashboard (Seção 6 — legenda de status)
-    const contarPorStatus = (...statusList) =>
-      porStatus.filter(item => statusList.includes(item.status)).reduce((soma, item) => soma + item.quantidade, 0);
+    const [[aPagar]] = await pool.query(
+      `SELECT COUNT(*) AS qtd, COALESCE(SUM(valor_a_pagar_final), 0) AS total
+       FROM casos WHERE ${CRITERIO_A_PAGAR}`
+    );
+    const [valorPorParceiro] = await pool.query(
+      `SELECT COALESCE(parceiro, '—') AS parceiro, COUNT(*) AS qtd,
+              COALESCE(SUM(valor_a_pagar_final), 0) AS total
+       FROM casos WHERE ${CRITERIO_A_PAGAR}
+       GROUP BY parceiro ORDER BY total DESC`
+    );
 
-    const totalCasos = porStatus.reduce((soma, item) => soma + item.quantidade, 0);
+    const [[{ n: emConferencia }]] = await pool.query('SELECT COUNT(*) AS n FROM casos WHERE conferencia_pendente = 1');
+    const [porCia] = await pool.query(
+      `SELECT COALESCE(cia, '(sem CIA)') AS cia, COUNT(*) AS quantidade,
+              COALESCE(SUM(CASE WHEN ${CRITERIO_A_PAGAR} THEN valor_a_pagar_final ELSE 0 END), 0) AS total_a_pagar
+       FROM casos GROUP BY cia ORDER BY quantidade DESC`
+    );
+
+    const contar = (...lista) =>
+      porStatus.filter(i => lista.includes(i.status)).reduce((s, i) => s + i.quantidade, 0);
 
     res.json({
+      totalCasos,
       porStatus,
       porParceiro,
-      valorPorParceiro,
+      porCia,
       porMes,
-      totalAPagar: totalAPagarLinhas[0].total,
-      totalCasos,
-      emAnalise: contarPorStatus('EM CARÊNCIA / ANÁLISE'),
-      pendentes: contarPorStatus('AGUARDANDO DOC', 'AGUARDANDO OCR MANUAL'),
-      pagos: contarPorStatus('PAGO'),
-      cancelados: contarPorStatus('CANCELADO')
+      valorPorParceiro,
+      totalAPagar: Number(aPagar.total),
+      aPagarQtd: aPagar.qtd,
+      emAnalise: contar('EM CARÊNCIA / ANÁLISE'),
+      emFranquia: contar('EM FRANQUIA'),
+      emConferencia,
+      pendentes: contar('AGUARDANDO DOC', 'AGUARDANDO OCR MANUAL', 'NOVO'),
+      negados: contar('NEGADO'),
+      pagos: contar('PAGO'),
+      cancelados: contar('CANCELADO')
     });
   } catch (erro) {
     console.error(erro);
@@ -515,29 +644,193 @@ app.get('/api/dashboard', async (req, res) => {
   }
 });
 
+// Lista dos casos prontos pra pagar — mesmo critério e mesma coluna de valor do
+// cartão "A pagar" do dashboard, então a soma da tabela == o cartão.
+app.get('/api/pagar-agora', async (req, res) => {
+  try {
+    const [linhas] = await pool.query(
+      `SELECT id, segurado, nome_arquivo, cpf_ccb, parceiro, fundo, cia,
+              valor_parcela, numero_parcelas_cobertas_produto,
+              valor_a_pagar, valor_total_a_pagar, valor_a_pagar_planilha,
+              valor_a_pagar_final, status, status_planilha
+       FROM casos WHERE ${CRITERIO_A_PAGAR}
+       ORDER BY parceiro ASC, valor_a_pagar_final DESC, segurado ASC`
+    );
+    const total = linhas.reduce((s, c) => s + Number(c.valor_a_pagar_final || 0), 0);
+    const porParceiro = [];
+    for (const c of linhas) {
+      const nome = c.parceiro || '—';
+      let grupo = porParceiro.find(g => g.parceiro === nome);
+      if (!grupo) { grupo = { parceiro: nome, quantidade: 0, total: 0 }; porParceiro.push(grupo); }
+      grupo.quantidade++;
+      grupo.total += Number(c.valor_a_pagar_final || 0);
+    }
+    res.json({ casos: linhas, total, quantidade: linhas.length, porParceiro });
+  } catch (erro) {
+    console.error(erro);
+    res.status(500).json({ erro: 'Falha ao buscar casos a pagar: ' + erro.message });
+  }
+});
+
+// Opções para montar os selects do painel de exportação (e da lista de casos).
+app.get('/api/filtros', async (req, res) => {
+  try {
+    const [parceiros] = await pool.query("SELECT DISTINCT parceiro FROM casos WHERE parceiro IS NOT NULL AND parceiro <> '' ORDER BY parceiro");
+    const [fundos] = await pool.query("SELECT DISTINCT fundo FROM casos WHERE fundo IS NOT NULL AND fundo <> '' ORDER BY fundo");
+    const [status] = await pool.query("SELECT DISTINCT status FROM casos WHERE status IS NOT NULL ORDER BY status");
+    res.json({
+      parceiros: parceiros.map(r => r.parceiro),
+      fundos: fundos.map(r => r.fundo),
+      status: status.map(r => r.status)
+    });
+  } catch (erro) {
+    console.error(erro);
+    res.status(500).json({ erro: erro.message });
+  }
+});
+
+// Exportação configurável. `incluir_cia` desmarcado => a coluna CIA NÃO existe
+// na planilha (nem oculta): os dados são montados sem ela.
 app.get('/exportar', async (req, res) => {
   try {
-    const [linhas] = await pool.query(`
-      SELECT
-        id, segurado, cpf_ccb, parceiro, fundo, cobertura,
-        data_contratacao, data_evento, data_admissao,
-        valor_parcela, limite_beneficio, numero_parcelas_contratadas,
-        teto_parcela_produto, numero_parcelas_cobertas_produto, fonte_produto,
-        carencia_dias, franquia_data, cia, valor_a_pagar, status, motivo_negacao,
-        nome_arquivo, data_upload
-      FROM casos ORDER BY id DESC
-    `);
-    const planilha = XLSX.utils.json_to_sheet(linhas);
+    const { parceiro, fundo, cia, status, evento_de, evento_ate, criado_de, criado_ate } = req.query;
+    const incluirCia = req.query.incluir_cia === '1' || req.query.incluir_cia === 'true';
+
+    let where = 'WHERE 1=1';
+    const p = [];
+    if (parceiro) { where += ' AND parceiro = ?'; p.push(parceiro); }
+    if (fundo) { where += ' AND fundo = ?'; p.push(fundo); }
+    if (cia && cia !== 'TODOS') { where += ' AND cia = ?'; p.push(cia); }
+    if (status) { where += ' AND status = ?'; p.push(status); }
+    if (evento_de) { where += ' AND data_evento >= ?'; p.push(evento_de); }
+    if (evento_ate) { where += ' AND data_evento <= ?'; p.push(evento_ate); }
+    if (criado_de) { where += ' AND data_upload >= ?'; p.push(criado_de + ' 00:00:00'); }
+    if (criado_ate) { where += ' AND data_upload <= ?'; p.push(criado_ate + ' 23:59:59'); }
+
+    const colunasBase = [
+      'id', 'origem', 'segurado', 'cpf_ccb', 'parceiro', 'fundo', 'cobertura',
+      'mes_ano_contratacao', 'data_contratacao', 'data_evento', 'data_admissao',
+      'valor_parcela', 'numero_parcelas_contratadas',
+      'teto_parcela_produto', 'numero_parcelas_cobertas_produto',
+      'carencia_dias', 'franquia_data', 'franquia_planilha',
+      'valor_a_pagar', 'valor_total_a_pagar', 'valor_a_pagar_planilha', 'valor_a_pagar_final',
+      'casos_a_pagar', 'status', 'status_planilha', 'motivo_negacao', 'motivo_conferencia',
+      'nome_arquivo', 'data_upload'
+    ];
+    // CIA entra na lista de colunas SOMENTE se o checkbox estiver marcado.
+    const colunas = incluirCia
+      ? [...colunasBase.slice(0, 7), 'cia', ...colunasBase.slice(7)]
+      : colunasBase;
+
+    const [linhas] = await pool.query(`SELECT ${colunas.join(', ')} FROM casos ${where} ORDER BY id DESC`, p);
+
+    const planilha = XLSX.utils.json_to_sheet(linhas, { header: colunas });
     const livro = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(livro, planilha, 'CONSOLIDADO');
     const buffer = XLSX.write(livro, { type: 'buffer', bookType: 'xlsx' });
 
-    res.setHeader('Content-Disposition', 'attachment; filename=casos_sinistros.xlsx');
+    const hoje = new Date();
+    const dd = String(hoje.getDate()).padStart(2, '0') + String(hoje.getMonth() + 1).padStart(2, '0') + hoje.getFullYear();
+    const semAcentoAscii = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Za-z0-9_]/g, '');
+    const marcaCia = (!cia || cia === 'TODOS') ? 'TODOS' : semAcentoAscii(cia).toUpperCase();
+    const sufixo = incluirCia ? (marcaCia === 'TODOS' ? 'TODOS_interno' : marcaCia) : 'sem_cia';
+    const nomeArquivo = `casos_${status === 'PRONTO PARA PAGAR' ? 'a_pagar_' : ''}${sufixo}_${dd}.xlsx`;
+
+    res.setHeader('Content-Disposition', `attachment; filename=${nomeArquivo}`);
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buffer);
   } catch (erro) {
     console.error(erro);
     res.status(500).send('Erro ao exportar: ' + erro.message);
+  }
+});
+
+// --- Separação por quem paga (CIA) — informação INTERNA, atrás do login ---
+app.get('/api/por-cia/:cia', async (req, res) => {
+  try {
+    const cia = req.params.cia;
+    if (!['MetLife', 'Caburé'].includes(cia)) return res.status(400).json({ erro: 'CIA inválida.' });
+    const [linhas] = await pool.query(
+      `SELECT id, segurado, cpf_ccb, parceiro, fundo, cia, data_evento,
+              valor_a_pagar, valor_total_a_pagar, valor_a_pagar_final, casos_a_pagar, status
+       FROM casos WHERE cia = ? ORDER BY ${CRITERIO_A_PAGAR} DESC, valor_a_pagar_final DESC, segurado ASC`,
+      [cia]
+    );
+    const aPagar = linhas.filter(c => c.casos_a_pagar === 1);
+    const totalAPagar = aPagar.reduce((s, c) => s + Number(c.valor_a_pagar_final || 0), 0);
+    res.json({ cia, casos: linhas, quantidade: linhas.length, aPagarQtd: aPagar.length, totalAPagar });
+  } catch (erro) {
+    console.error(erro);
+    res.status(500).json({ erro: 'Falha ao buscar casos por CIA: ' + erro.message });
+  }
+});
+
+// --- Conferência manual (casos que a leitura automática não conseguiu ler) ---
+app.get('/api/conferencia', async (req, res) => {
+  try {
+    const [linhas] = await pool.query(
+      `SELECT id, segurado, cpf_ccb, parceiro, tipo_documento, motivo_conferencia, data_upload
+       FROM casos WHERE conferencia_pendente = 1 ORDER BY data_upload ASC`
+    );
+    res.json(linhas);
+  } catch (erro) {
+    console.error(erro);
+    res.status(500).json({ erro: erro.message });
+  }
+});
+
+app.get('/api/conferencia/:id', async (req, res) => {
+  try {
+    const [linhas] = await pool.query('SELECT * FROM casos WHERE id = ?', [req.params.id]);
+    if (linhas.length === 0) return res.status(404).json({ erro: 'Caso não encontrado.' });
+    const [extr] = await pool.query(
+      'SELECT json_extraido, confianca_json, fonte, data_extracao FROM extracoes_ia WHERE caso_id = ? ORDER BY id DESC LIMIT 1',
+      [req.params.id]
+    );
+    res.json({ caso: linhas[0], extracao: extr[0] || null });
+  } catch (erro) {
+    console.error(erro);
+    res.status(500).json({ erro: erro.message });
+  }
+});
+
+app.put('/api/conferencia/:id', async (req, res) => {
+  try {
+    const casoId = req.params.id;
+    const usuario = req.session.usuario.nome;
+    const permitidos = ['segurado', 'cpf_ccb', 'parceiro', 'fundo', 'cobertura',
+      'data_contratacao', 'data_evento', 'data_admissao', 'motivo_desligamento_codigo',
+      'valor_parcela', 'teto_parcela_produto', 'numero_parcelas_contratadas', 'numero_parcelas_cobertas_produto'];
+
+    const [linhas] = await pool.query('SELECT * FROM casos WHERE id = ?', [casoId]);
+    if (linhas.length === 0) return res.status(404).json({ erro: 'Caso não encontrado.' });
+    const antes = linhas[0];
+
+    for (const campo of permitidos) {
+      if (Object.prototype.hasOwnProperty.call(req.body, campo)) {
+        let valor = req.body[campo];
+        if (valor === '' ) valor = null;
+        await registrarHistorico(casoId, campo, antes[campo], valor, usuario);
+        await pool.query(`UPDATE casos SET ${campo} = ? WHERE id = ?`, [valor, casoId]);
+      }
+    }
+
+    // Conferência concluída: libera o caso para o motor de regras decidir o status.
+    await registrarHistorico(casoId, 'conferencia', 'pendente', 'conferido por ' + usuario, usuario);
+    await pool.query(
+      "UPDATE casos SET conferencia_pendente = 0, motivo_conferencia = NULL, status = 'NOVO' WHERE id = ?",
+      [casoId]
+    );
+    const [row] = await pool.query('SELECT cpf_ccb, segurado FROM casos WHERE id = ?', [casoId]);
+    const chaves = chavesIdentidade(row[0].cpf_ccb, row[0].segurado);
+    await pool.query('UPDATE casos SET identidade_chaves = ?, cpf_ccb = COALESCE(?, cpf_ccb) WHERE id = ?',
+      [chaves.length ? JSON.stringify(chaves) : null, formatarCpfCcb(row[0].cpf_ccb), casoId]);
+
+    await aplicarMotorDeRegras(casoId, usuario);
+    res.json({ mensagem: 'Conferência salva. O motor de regras reprocessou o caso.' });
+  } catch (erro) {
+    console.error(erro);
+    res.status(500).json({ erro: 'Falha ao salvar conferência: ' + erro.message });
   }
 });
 

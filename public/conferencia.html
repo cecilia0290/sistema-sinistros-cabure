@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Conferência manual — Caburé Sinistros</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;650&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/estilo.css">
+</head>
+<body>
+  <div class="app-layout">
+    <div id="sidebar" class="sidebar"></div>
+    <div class="main-content">
+      <div class="page">
+        <div class="page-header">
+          <div>
+            <span class="eyebrow">Ação · leitura automática</span>
+            <h1 class="page-title">Conferência manual</h1>
+            <p class="page-desc">Casos que o sistema <strong>não conseguiu ler sozinho</strong> (campo obrigatório ilegível, OCR fraco, PDF escaneado). Confira o texto lido e preencha o formulário.</p>
+          </div>
+          <div class="header-meta" id="header-meta"></div>
+        </div>
+
+        <div class="conf-layout">
+          <div class="conf-lista">
+            <div class="conf-lista-head">Pendentes (<span id="conf-qtd">0</span>)</div>
+            <div id="conf-lista"></div>
+          </div>
+
+          <div class="conf-detalhe" id="conf-detalhe">
+            <div class="vazio">Selecione um caso à esquerda.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/formato.js"></script>
+  <script>
+    let selecionado = null;
+
+    async function carregarLista() {
+      const r = await fetch('/api/conferencia');
+      const casos = await r.json();
+      document.getElementById('conf-qtd').textContent = casos.length;
+      document.getElementById('header-meta').textContent = casos.length + ' caso(s) aguardando';
+      document.getElementById('conf-lista').innerHTML = casos.map(c => `
+        <button class="conf-item ${selecionado === c.id ? 'ativo' : ''}" data-id="${c.id}">
+          <div class="conf-item-nome">${c.segurado || c.cpf_ccb || ('Caso #' + c.id)}</div>
+          <div class="conf-item-meta">${c.parceiro || 'parceiro ?'} · ${c.tipo_documento || 'tipo ?'}</div>
+          <div class="conf-item-motivo">${c.motivo_conferencia || ''}</div>
+        </button>`).join('') || '<div class="vazio" style="padding:20px;">Nada pendente 🎉</div>';
+      document.querySelectorAll('.conf-item').forEach(b =>
+        b.addEventListener('click', () => abrir(Number(b.dataset.id))));
+    }
+
+    const CAMPOS = [
+      ['segurado', 'Segurado', 'text'],
+      ['cpf_ccb', 'CPF / CCB', 'text'],
+      ['parceiro', 'Parceiro', 'text'],
+      ['fundo', 'Fundo', 'text'],
+      ['data_admissao', 'Data de admissão', 'date'],
+      ['data_contratacao', 'Data de contratação', 'date'],
+      ['data_evento', 'Data do evento (desligamento)', 'date'],
+      ['motivo_desligamento_codigo', 'Cód. motivo do desligamento', 'text'],
+      ['valor_parcela', 'Valor da parcela (R$)', 'number'],
+      ['numero_parcelas_contratadas', 'Nº de parcelas contratadas', 'number']
+    ];
+
+    function nivelPill(nivel) {
+      const m = { alta: ['badge-sucesso', 'lido: alta'], media: ['badge-alerta', 'lido: média'],
+        baixa: ['badge-perigo', 'lido: baixa'], ausente: ['badge-perigo', 'não lido'] };
+      const [cls, txt] = m[nivel] || ['badge-neutro', '—'];
+      return `<span class="badge ${cls}" style="font-size:9.5px;">${txt}</span>`;
+    }
+
+    async function abrir(id) {
+      selecionado = id;
+      document.querySelectorAll('.conf-item').forEach(b => b.classList.toggle('ativo', Number(b.dataset.id) === id));
+      const r = await fetch('/api/conferencia/' + id);
+      const d = await r.json();
+      const caso = d.caso;
+      const conf = (d.extracao && d.extracao.confianca_json) ? (typeof d.extracao.confianca_json === 'string' ? JSON.parse(d.extracao.confianca_json) : d.extracao.confianca_json) : {};
+      const isoDate = (v) => v ? new Date(v).toISOString().slice(0, 10) : '';
+
+      document.getElementById('conf-detalhe').innerHTML = `
+        <div class="conf-detalhe-head">
+          <div>
+            <div class="caso-id">CASO #${String(caso.id).padStart(6, '0')} · ${caso.tipo_documento || 'tipo ?'}</div>
+            <h2 style="margin:4px 0;">${caso.segurado || 'Segurado a confirmar'}</h2>
+          </div>
+          <a class="btn btn-secondary" href="/caso.html?id=${caso.id}">Abrir caso</a>
+        </div>
+        <div class="aviso-caixa"><strong>Por que caiu aqui:</strong> ${caso.motivo_conferencia || '—'}<br>
+          <span style="color:var(--text-faint)">Fonte da leitura: ${(d.extracao && d.extracao.fonte) || '—'}</span></div>
+
+        <div class="conf-cols">
+          <div class="conf-ocr">
+            <div class="conf-sub">Texto lido do documento (OCR / PDF)</div>
+            <pre id="ocr-texto">${(caso.texto_extraido || '(sem texto)').replace(/[<>&]/g, s => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[s]))}</pre>
+          </div>
+          <form id="conf-form" class="conf-form">
+            <div class="conf-sub">Campos — corrija o que estiver errado ou faltando</div>
+            ${CAMPOS.map(([k, rot, tipo]) => `
+              <label class="conf-campo">
+                <span class="conf-campo-rot">${rot} ${nivelPill(conf[k] || (caso[k] ? 'media' : 'ausente'))}</span>
+                <input name="${k}" type="${tipo}" ${tipo === 'number' ? 'step="0.01"' : ''}
+                  value="${tipo === 'date' ? isoDate(caso[k]) : (caso[k] ?? '')}">
+              </label>`).join('')}
+            <div class="conf-acoes">
+              <button type="submit" class="btn btn-primary">Salvar e reprocessar</button>
+              <span id="conf-msg" class="mensagem-status"></span>
+            </div>
+          </form>
+        </div>`;
+
+      document.getElementById('conf-form').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const body = {};
+        new FormData(e.target).forEach((val, key) => { body[key] = val; });
+        const msg = document.getElementById('conf-msg');
+        msg.textContent = 'Salvando...'; msg.className = 'mensagem-status';
+        const resp = await fetch('/api/conferencia/' + id, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        const out = await resp.json();
+        if (resp.ok) {
+          msg.textContent = out.mensagem; msg.className = 'mensagem-status mensagem-ok';
+          selecionado = null;
+          await carregarLista();
+          document.getElementById('conf-detalhe').innerHTML = '<div class="vazio">Caso conferido ✓ — selecione o próximo.</div>';
+        } else {
+          msg.textContent = 'Erro: ' + out.erro; msg.className = 'mensagem-status mensagem-erro';
+        }
+      });
+    }
+
+    carregarLista();
+  </script>
+  <script src="/layout.js"></script>
+</body>
+</html>

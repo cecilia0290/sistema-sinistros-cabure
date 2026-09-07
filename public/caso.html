@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;650&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/estilo.css">
+  <script src="/formato.js"></script>
 </head>
 <body>
   <div class="app-layout">
@@ -58,25 +59,36 @@
 
     async function carregarCaso() {
       const id = new URLSearchParams(window.location.search).get('id');
-      if (!id) {
-        document.getElementById('carregando').textContent = 'Nenhum caso informado na URL.';
+      if (!id || !/^\d+$/.test(id)) {
+        document.getElementById('carregando').textContent = 'Nenhum caso válido informado na URL.';
         return;
       }
 
-      const [respCaso, respDocs, respHist] = await Promise.all([
-        fetch('/api/casos/' + id),
-        fetch('/api/documentos/' + id),
-        fetch('/api/historico/' + id)
-      ]);
+      let respCaso, respDocs, respHist;
+      try {
+        [respCaso, respDocs, respHist] = await Promise.all([
+          fetch('/api/casos/' + id),
+          fetch('/api/documentos/' + id),
+          fetch('/api/historico/' + id)
+        ]);
+      } catch (e) {
+        document.getElementById('carregando').innerHTML = 'Falha de conexão ao carregar o caso. <a href="#" onclick="location.reload();return false;">Tentar de novo</a>';
+        return;
+      }
 
+      if (respCaso.status === 401) { window.location.href = '/login.html'; return; }
       if (!respCaso.ok) {
         document.getElementById('carregando').textContent = 'Caso não encontrado.';
         return;
       }
 
       const caso = await respCaso.json();
-      const documentos = await respDocs.json();
-      const historico = await respHist.json();
+      // Documentos/histórico não podem derrubar a página: se falharem, seguem vazios.
+      let documentos = respDocs && respDocs.ok ? await respDocs.json().catch(() => []) : [];
+      let historico = respHist && respHist.ok ? await respHist.json().catch(() => []) : [];
+      if (!Array.isArray(documentos)) documentos = [];
+      if (!Array.isArray(historico)) historico = [];
+      if (!caso.analise) caso.analise = { elegibilidade: {}, carencia: {}, franquiaData: null };
 
       document.title = 'Caso #' + caso.id + ' — Caburé Sinistros';
 
@@ -134,6 +146,10 @@
           <span class="badge ${classeBadge(caso.status)}" style="font-size:13px; padding:6px 14px;">${caso.status}</span>
         </div>
 
+        ${Number(caso.conferencia_pendente) ? `<div class="aviso-caixa" style="border-color:var(--warning-dot);">
+          <strong>Aguardando conferência manual.</strong> ${caso.motivo_conferencia || 'A leitura automática não concluiu.'}
+          <a href="/conferencia.html" style="margin-left:6px;">Abrir conferência →</a></div>` : ''}
+
         <div class="secao">
           <h3>Resumo</h3>
           <div class="resumo-grid">
@@ -141,14 +157,17 @@
             <div class="resumo-item"><div class="rotulo">Teto do seguro</div><div class="valor">${fmtMoeda(caso.teto_parcela_produto)}</div></div>
             <div class="resumo-item"><div class="rotulo">Parcelas cobertas</div><div class="valor">${caso.numero_parcelas_cobertas_produto ?? '—'}</div></div>
             <div class="resumo-item"><div class="rotulo">Data do evento</div><div class="valor">${fmtData(caso.data_evento)}</div></div>
-            <div class="resumo-item"><div class="rotulo">Valor a pagar</div><div class="valor destaque">${fmtMoeda(caso.valor_a_pagar)}</div></div>
+            <div class="resumo-item"><div class="rotulo">Valor por parcela</div><div class="valor">${fmtMoeda(caso.valor_a_pagar)}</div></div>
+            <div class="resumo-item"><div class="rotulo">Total a pagar</div><div class="valor destaque">${fmtMoeda(caso.valor_a_pagar_final ?? caso.valor_total_a_pagar ?? caso.valor_a_pagar)}</div></div>
+            <div class="resumo-item"><div class="rotulo">Marcado “a pagar” (planilha)</div><div class="valor"><span class="badge ${Number(caso.casos_a_pagar) ? 'badge-sucesso' : 'badge-neutro'}">${Number(caso.casos_a_pagar) ? 'SIM' : 'NÃO'}</span></div></div>
           </div>
+          ${caso.status_planilha ? '<div class="aviso-caixa">Etiqueta de STATUS na planilha: <strong>' + caso.status_planilha + '</strong> — usada só como referência; quem decide o pagamento é a coluna CASOS A PAGAR.</div>' : ''}
         </div>
 
         <div class="secao">
           <h3>Informações do segurado</h3>
           <div class="resumo-grid">
-            <div class="resumo-item"><div class="rotulo">CPF / CCB</div><div class="valor">${caso.cpf_ccb || '—'}</div></div>
+            <div class="resumo-item"><div class="rotulo">CPF / CCB</div><div class="valor">${window.Formato ? Formato.formatarCpfCcb(caso.cpf_ccb) : (caso.cpf_ccb || '—')}</div></div>
             <div class="resumo-item"><div class="rotulo">Cobertura</div><div class="valor" style="font-family:'Inter',sans-serif; font-weight:500; font-size:13.5px;">${caso.cobertura || '—'}</div></div>
             <div class="resumo-item"><div class="rotulo">Fundo</div><div class="valor" style="font-family:'Inter',sans-serif; font-weight:500; font-size:13.5px;">${caso.fundo || '—'}</div></div>
             <div class="resumo-item"><div class="rotulo">Data de contratação</div><div class="valor">${fmtData(caso.data_contratacao)}</div></div>
@@ -216,7 +235,13 @@
       `;
     }
 
-    carregarCaso();
+    carregarCaso().catch(err => {
+      console.error(err);
+      const alvo = document.getElementById('conteudo-pagina') || document.body;
+      alvo.innerHTML = '<a href="/index.html" class="breadcrumb">← Voltar para casos</a>' +
+        '<div class="vazio">Não foi possível montar a página do caso (' + (err && err.message ? err.message : 'erro') +
+        '). <a href="#" onclick="location.reload();return false;">Recarregar</a></div>';
+    });
   </script>
   <script src="/layout.js"></script>
 </body>

@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quem paga — Caburé Sinistros</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;650&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/estilo.css">
+</head>
+<body>
+  <div class="app-layout">
+    <div id="sidebar" class="sidebar"></div>
+    <div class="main-content">
+      <div class="page">
+        <div class="page-header">
+          <div>
+            <span class="eyebrow">Interno · quem paga</span>
+            <h1 class="page-title" id="titulo">Casos que a MetLife tem que pagar</h1>
+            <p class="page-desc">Separação por <strong>CIA</strong>, calculada pelo sistema. Informação <strong>interna</strong> — nunca deve ser compartilhada com o parceiro.</p>
+          </div>
+          <div class="header-meta" id="header-meta"></div>
+        </div>
+
+        <div class="seg-toggle">
+          <button data-cia="MetLife" class="seg-btn">MetLife</button>
+          <button data-cia="Caburé" class="seg-btn">Caburé</button>
+        </div>
+
+        <div class="stat-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin: 16px 0;">
+          <div class="stat-card destaque">
+            <div class="stat-top"><span class="stat-label">Total a pagar (marcados)</span></div>
+            <div class="stat-value" id="s-total">R$ 0,00</div>
+            <div class="stat-sub" id="s-total-sub">— casos a pagar</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-top"><span class="stat-label">Casos desta CIA</span></div>
+            <div class="stat-value" id="s-qtd">0</div>
+            <div class="stat-sub">no total</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-top"><span class="stat-label">Marcados “a pagar”</span></div>
+            <div class="stat-value" id="s-apagar">0</div>
+            <div class="stat-sub">coluna CASOS A PAGAR</div>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>ID</th><th>Segurado</th><th>CPF/CCB</th><th>Parceiro</th><th>Fundo</th>
+              <th>Data evento</th><th class="col-num">A pagar</th><th>Marcado</th><th>Status</th>
+            </tr></thead>
+            <tbody id="tabela"></tbody>
+            <tfoot id="rodape"></tfoot>
+          </table>
+          <div id="vazio" class="vazio" style="display:none;">Nenhum caso para esta CIA.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/formato.js"></script>
+  <script>
+    const params = new URLSearchParams(location.search);
+    let ciaAtual = params.get('cia') === 'Caburé' ? 'Caburé' : 'MetLife';
+
+    function badge(status) {
+      const mapa = { 'PRONTO PARA PAGAR': 'badge-sucesso', 'PAGO': 'badge-sucesso', 'EM FRANQUIA': 'badge-alerta',
+        'AGUARDANDO DOC': 'badge-alerta', 'AGUARDANDO CONFERÊNCIA MANUAL': 'badge-alerta',
+        'EM CARÊNCIA / ANÁLISE': 'badge-info', 'NOVO': 'badge-neutro', 'NEGADO': 'badge-perigo', 'CANCELADO': 'badge-perigo' };
+      return mapa[status] || 'badge-neutro';
+    }
+
+    async function carregar() {
+      document.querySelectorAll('.seg-btn').forEach(b => b.classList.toggle('ativo', b.dataset.cia === ciaAtual));
+      document.getElementById('titulo').textContent = 'Casos que a ' + ciaAtual + ' tem que pagar';
+      history.replaceState(null, '', '/por-cia.html?cia=' + encodeURIComponent(ciaAtual));
+
+      const r = await fetch('/api/por-cia/' + encodeURIComponent(ciaAtual));
+      const d = await r.json();
+      const casos = d.casos || [];
+
+      document.getElementById('s-total').textContent = Formato.brl(d.totalAPagar);
+      document.getElementById('s-total-sub').textContent = d.aPagarQtd + ' casos a pagar';
+      document.getElementById('s-qtd').textContent = d.quantidade;
+      document.getElementById('s-apagar').textContent = d.aPagarQtd;
+      document.getElementById('header-meta').textContent = 'Atualizado ' + new Date().toLocaleString('pt-BR');
+
+      document.getElementById('tabela').innerHTML = casos.map(c => `
+        <tr class="linha-clicavel" data-id="${c.id}">
+          <td class="col-mono">${c.id}</td>
+          <td>${c.segurado || '—'}</td>
+          <td class="col-mono">${Formato.formatarCpfCcb(c.cpf_ccb)}</td>
+          <td>${c.parceiro || '—'}</td>
+          <td>${c.fundo || '—'}</td>
+          <td class="col-mono">${Formato.dataBR(c.data_evento)}</td>
+          <td class="col-num col-mono col-valor">${Formato.brl(c.valor_a_pagar_final)}</td>
+          <td>${Number(c.casos_a_pagar) ? '<span class="badge badge-sucesso">SIM</span>' : '<span class="badge badge-neutro">não</span>'}</td>
+          <td><span class="badge ${badge(c.status)}">${c.status || '—'}</span></td>
+        </tr>`).join('');
+
+      document.getElementById('vazio').style.display = casos.length ? 'none' : 'block';
+      document.getElementById('rodape').innerHTML = casos.length ? `
+        <tr class="linha-total"><td colspan="6">Total a pagar (${d.aPagarQtd} marcados)</td>
+        <td class="col-num col-mono">${Formato.brl(d.totalAPagar)}</td><td colspan="2"></td></tr>` : '';
+
+      document.querySelectorAll('.linha-clicavel').forEach(l =>
+        l.addEventListener('click', () => location.href = '/caso.html?id=' + l.dataset.id));
+    }
+
+    document.querySelectorAll('.seg-btn').forEach(b =>
+      b.addEventListener('click', () => { ciaAtual = b.dataset.cia; carregar(); }));
+    carregar();
+  </script>
+  <script src="/layout.js"></script>
+</body>
+</html>
