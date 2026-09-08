@@ -203,12 +203,75 @@ async function lerParteDocumental(caminho, nomeOriginal) {
   return { nome: nomeOriginal, texto: texto || '', precisaOcrManual: !!precisaOcrManual, extracao };
 }
 
+// Palavras que denunciam "não é nome de pessoa" no nome de um arquivo/pasta.
+const TOKENS_NAO_NOME = [
+  'ccb', 'cedula', 'assinad', 'relatorio', 'agenda', 'anexo', 'contrato', 'proposta',
+  'seguro', 'prestamista', 'dataprev', 'cnis', 'trct', 'rescis', 'homolognet',
+  'frontdocument', 'backdocument', 'front', 'back', 'documento', 'comprovante',
+  'selfie', 'foto', 'scan', 'img', 'image', 'rg', 'cnh', 'cpf', 'doc'
+];
+
+// "Isto parece o nome de uma pessoa?"  >=2 palavras, só letras/espaço/hífen/ponto,
+// sem dígitos, sem UUID, sem token técnico. Usado para NÃO adotar "ID - <uuid>",
+// "CCB-Assinada-...", "Relatorio_Agenda_88255980" etc. como nome do segurado.
+function pareceNomeDePessoa(texto) {
+  if (!texto) return false;
+  let s = String(texto).trim();
+  const ext = path.extname(s);
+  if (ext && /^\.[a-z0-9]{1,5}$/i.test(ext)) s = s.slice(0, -ext.length);
+  s = s.replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (s.length < 5 || s.length > 60) return false;
+  if (/\d/.test(s)) return false;                                  // nomes não têm dígitos (mata UUID, nº CCB)
+  if (!/^[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ .'-]*$/.test(s)) return false;
+  const palavras = s.split(' ').filter(p => p.replace(/[.'-]/g, '').length >= 2);
+  if (palavras.length < 2) return false;
+  const norm = s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  if (TOKENS_NAO_NOME.some(t => norm.includes(t))) return false;
+  return true;
+}
+
+// Nome do segurado a partir dos NOMES dos arquivos da unidade (não do conteúdo).
+// Alguns parceiros nomeiam a pasta com um código interno ("ID - <uuid>") e põem
+// lá dentro um PDF com o nome real da pessoa ("LEONARA RODRIGUES PEREIRA.pdf").
+// Isto NÃO é específico de um parceiro — vale para qualquer zip nesse formato.
+// -> string com o nome, ou null. Tem prioridade sobre o nome vindo do OCR.
+function nomeSeguradoDosArquivos(nomeReferencia, partes) {
+  const candidatos = [];
+  for (const p of (partes || [])) {
+    const base = String(p.nome || '').replace(/\\/g, '/').split('/').filter(Boolean).pop() || '';
+    candidatos.push(base);
+  }
+  // arquivo com nome de pessoa vence; só depois tenta o nome da unidade/pasta
+  const doArquivo = candidatos.find(pareceNomeDePessoa);
+  if (doArquivo) return limparNomePessoa(doArquivo);
+  if (pareceNomeDePessoa(nomeReferencia)) return limparNomePessoa(nomeReferencia);
+  return null;
+}
+
+function limparNomePessoa(texto) {
+  let s = String(texto).trim();
+  const ext = path.extname(s);
+  if (ext && /^\.[a-z0-9]{1,5}$/i.test(ext)) s = s.slice(0, -ext.length);
+  return s.replace(/[_]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 // `partes`: [{ nome, texto, precisaOcrManual, extracao }] — um por documento do MESMO segurado.
 async function processarUnidadeDocumental(nomeReferencia, partes) {
   const textoExtraido = partes.map(p => `--- ${p.nome} ---\n${p.texto || ''}`).join('\n\n').trim();
   const precisaOcrManual = partes.some(p => p.precisaOcrManual);
   const extraida = mesclarExtracoes(partes.map(p => p.extracao));
   const campos = Object.keys(extraida.campos || {}).length ? extraida.campos : null;
+
+  // Nome do segurado pelo NOME de um arquivo da pasta (ex.: "FULANO DE TAL.pdf"),
+  // quando a pasta/unidade vem com código interno ("ID - <uuid>"). Tem PRIORIDADE
+  // sobre o nome lido do conteúdo por OCR, se divergirem. Aplica a QUALQUER zip
+  // nesse formato — não é específico de um parceiro.
+  const nomeArquivoSegurado = nomeSeguradoDosArquivos(nomeReferencia, partes);
+  if (nomeArquivoSegurado && campos && campos.segurado &&
+      campos.segurado.trim().toLowerCase() !== nomeArquivoSegurado.trim().toLowerCase()) {
+    console.log(`[nome] "${nomeReferencia}": OCR="${campos.segurado}" divergente — uso o do arquivo "${nomeArquivoSegurado}"`);
+  }
+  const seguradoFinal = nomeArquivoSegurado || (campos && campos.segurado) || null;
 
   // Precisa de conferência humana? (campo obrigatório ilegível, OCR ruim, PDF escaneado…)
   let conferencia = precisaOcrManual || extraida.precisaConferencia;
@@ -217,7 +280,7 @@ async function processarUnidadeDocumental(nomeReferencia, partes) {
   else if (extraida.precisaConferencia) motivoConf = extraida.motivoConferencia;
   if (!campos) { conferencia = true; motivoConf = motivoConf || 'Documento sem texto legível — precisa conferência manual.'; }
 
-  const casoExistenteId = campos ? await buscarCasoPorCpfCcb(campos.cpf_ccb, campos.segurado) : null;
+  const casoExistenteId = campos ? await buscarCasoPorCpfCcb(campos.cpf_ccb, seguradoFinal) : null;
 
   let casoId;
   let eraNovo;
@@ -230,7 +293,9 @@ async function processarUnidadeDocumental(nomeReferencia, partes) {
       `\n\n--- Documento adicional: ${nomeReferencia} ---\n` + textoExtraido;
     await pool.query('UPDATE casos SET texto_extraido = ? WHERE id = ?', [textoCombinado, casoId]);
   } else {
-    const chavesIniciais = campos ? chavesIdentidade(campos.cpf_ccb, campos.segurado) : [];
+    const chavesIniciais = (campos || seguradoFinal)
+      ? chavesIdentidade(campos && campos.cpf_ccb, seguradoFinal)
+      : [];
     const [resultado] = await pool.query(
       `INSERT INTO casos (nome_arquivo, texto_extraido, status, origem, identidade_chaves,
                           tipo_documento, conferencia_pendente, motivo_conferencia)
@@ -276,7 +341,7 @@ async function processarUnidadeDocumental(nomeReferencia, partes) {
         fonte_produto = COALESCE(?, fonte_produto)
        WHERE id = ?`,
       [
-        v(campos.segurado), v(campos.cpf_ccb), v(campos.parceiro), v(campos.fundo), v(campos.cobertura),
+        v(seguradoFinal), v(campos.cpf_ccb), v(campos.parceiro), v(campos.fundo), v(campos.cobertura),
         v(campos.data_contratacao), v(campos.data_evento), v(campos.data_admissao), v(campos.motivo_desligamento_codigo),
         v(campos.valor_parcela), v(campos.limite_beneficio), v(campos.numero_parcelas_contratadas),
         v(campos.teto_parcela_produto), v(campos.numero_parcelas_cobertas_produto), v(campos.fonte_produto),
@@ -295,6 +360,15 @@ async function processarUnidadeDocumental(nomeReferencia, partes) {
         [chaves.length ? JSON.stringify(chaves) : null, normalizarParceiro(row.parceiro), formatarCpfCcb(row.cpf_ccb), casoId]
       );
     }
+  } else if (seguradoFinal) {
+    // Documento ilegível para os campos, mas o NOME do arquivo já dá o segurado
+    // (ex.: pasta "ID - <uuid>" com "FULANO DE TAL.pdf"). Guarda o nome e as
+    // chaves de identidade por nome — o caso segue em conferência manual.
+    const chaves = chavesIdentidade(null, seguradoFinal);
+    await pool.query(
+      'UPDATE casos SET segurado = COALESCE(segurado, ?), identidade_chaves = COALESCE(identidade_chaves, ?) WHERE id = ?',
+      [seguradoFinal, chaves.length ? JSON.stringify(chaves) : null, casoId]
+    );
   }
 
   await aplicarMotorDeRegras(casoId, 'Sistema (extração local + motor de regras)');
@@ -309,10 +383,18 @@ async function aplicarMotorDeRegras(casoId, usuario) {
   const casoAntes = linhas[0];
   const resultado = calcularCaso(casoAntes);
 
+  // O próprio motor pode mandar para conferência (ex.: datas incoerentes /
+  // carência negativa). Nesse caso o caso ENTRA na fila de conferência manual
+  // (conferencia_pendente = 1), não fica só com a etiqueta de status.
+  const motorPedeConferencia = resultado.status === STATUS_CONFERENCIA;
+  const conferenciaPendente = (casoAntes.conferencia_pendente || motorPedeConferencia) ? 1 : 0;
+
   // Enquanto o caso aguarda conferência humana, o STATUS fica travado nessa
   // etiqueta — o motor continua calculando carência/franquia/valor para exibição.
-  const statusFinal = casoAntes.conferencia_pendente ? STATUS_CONFERENCIA : resultado.status;
-  const motivoFinal = casoAntes.conferencia_pendente ? (casoAntes.motivo_conferencia || resultado.motivoNegacao) : resultado.motivoNegacao;
+  const statusFinal = conferenciaPendente ? STATUS_CONFERENCIA : resultado.status;
+  const motivoFinal = conferenciaPendente
+    ? (motorPedeConferencia ? resultado.motivoNegacao : (casoAntes.motivo_conferencia || resultado.motivoNegacao))
+    : resultado.motivoNegacao;
 
   await registrarHistorico(casoId, 'status', casoAntes.status, statusFinal, usuario);
   await registrarHistorico(casoId, 'valor_a_pagar', casoAntes.valor_a_pagar, resultado.valorAPagar, usuario);
@@ -331,13 +413,18 @@ async function aplicarMotorDeRegras(casoId, usuario) {
       numero_parcelas_cobertas_produto = COALESCE(?, numero_parcelas_cobertas_produto),
       teto_parcela_produto = COALESCE(?, teto_parcela_produto),
       parceiro = COALESCE(?, parceiro),
-      status = ?, motivo_negacao = ?
+      status = ?, motivo_negacao = ?,
+      conferencia_pendente = ?,
+      motivo_conferencia = ?
      WHERE id = ?`,
     [
       resultado.carenciaDias, resultado.franquiaData, resultado.cia,
       resultado.valorAPagar, resultado.valorTotalAPagar, valorFinal,
       resultado.parcelasCobertas, resultado.tetoParcelaProduto, resultado.parceiroCanonico,
-      statusFinal, motivoFinal, casoId
+      statusFinal, motivoFinal,
+      conferenciaPendente,
+      conferenciaPendente ? motivoFinal : null,
+      casoId
     ]
   );
 }

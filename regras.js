@@ -137,6 +137,13 @@ function produtoDoParceiro(parceiro, fundo) {
 // ----------------------------------------------------------------------------
 // Helpers de data (inalterados)
 // ----------------------------------------------------------------------------
+// Date | 'AAAA-MM-DD...' -> 'AAAA-MM-DD' (para mensagens legíveis ao usuário).
+function fmtDataCurta(d) {
+  if (!d) return '?';
+  const dt = (d instanceof Date) ? d : new Date(d);
+  return isNaN(dt) ? String(d) : dt.toISOString().slice(0, 10);
+}
+
 function calcularDiasEntreDatas(dataInicio, dataFim) {
   if (!dataInicio || !dataFim) return null;
   const inicio = new Date(dataInicio);
@@ -252,6 +259,15 @@ function arred2(n) {
 function calcularStatus(caso, elegibilidade, carencia, franquia, valorAPagar) {
   if (!caso.data_contratacao || !caso.data_evento) {
     return { status: 'AGUARDANDO DOC', motivo: 'Faltam datas essenciais (contratação e/ou evento) para calcular carência e franquia.' };
+  }
+  // Carência negativa = evento ANTES da contratação: fisicamente impossível, é
+  // erro de leitura de data — NÃO é uma negativa de regra de negócio. Vai para
+  // conferência manual; nunca "NEGADO automático" com um número sem sentido.
+  if (carencia.carenciaDias !== null && carencia.carenciaDias < 0) {
+    return {
+      status: 'AGUARDANDO CONFERÊNCIA MANUAL',
+      motivo: `Datas inconsistentes: carência calculada de ${carencia.carenciaDias} dia(s) — a data do evento (${fmtDataCurta(caso.data_evento)}) está antes da contratação (${fmtDataCurta(caso.data_contratacao)}). Revisar a leitura das datas antes de decidir.`
+    };
   }
   if (elegibilidade.elegivel === false) {
     return { status: 'NEGADO', motivo: elegibilidade.motivo };

@@ -515,6 +515,49 @@ teste('OCR com baixa confiança sozinho já manda para conferência', () => {
   assert.strictEqual(r.precisaConferencia, true);
   assert.ok(/baixa confian/i.test(r.motivoConferencia));
 });
+teste('CCB não é fonte confiável de data_evento: cai para conferência (confiança baixa)', () => {
+  const r = extr.extrairCamposLocal({ nomeArquivo: 'ccb.pdf', extensao: '.pdf',
+    texto: 'CEDULA DE CREDITO BANCARIO GRANATECH CPF: 111.222.333-44 contratacao 10/03/2026 ' +
+           'rescisao em 02/04/2025 o saldo vence' });
+  assert.strictEqual(r.campos.data_evento, '2025-04-02');       // o regex ainda capta
+  assert.strictEqual(r.confianca.data_evento, 'baixa');         // mas NÃO com confiança alta
+  assert.strictEqual(r.precisaConferencia, true);
+  assert.ok(/data_evento/.test(r.motivoConferencia), r.motivoConferencia);
+});
+teste('Dataprev corrobora a data do evento -> volta a NÃO precisar conferência', () => {
+  const ccb = extr.extrairCamposLocal({ nomeArquivo: 'ccb.pdf', extensao: '.pdf',
+    texto: 'CEDULA DE CREDITO BANCARIO GRANATECH CPF: 111.222.333-44 contratacao 10/01/2025 ' +
+           'rescisao do contrato de trabalho em 02/04/2025 parcela R$ 400,00' });
+  const dp = extr.extrairCamposLocal({ nomeArquivo: 'dp.json', extensao: '.json',
+    texto: JSON.stringify({ cpf: '11122233344', dataDesligamento: '2025-06-15', codigoMotivoDesligamento: '2' }) });
+  const m = extr.mesclarExtracoes([ccb, dp]);
+  assert.strictEqual(m.campos.data_evento, '2025-06-15');       // Dataprev vence
+  assert.strictEqual(m.confianca.data_evento, 'alta');
+  assert.strictEqual(m.precisaConferencia, false);
+});
+teste('datas incoerentes (evento antes da contratação) -> conferência, com motivo', () => {
+  const inc = extr.incoerenciasDeData({ data_contratacao: '2026-03-24', data_evento: '2025-04-02' });
+  assert.ok(inc.length >= 1 && /anterior à contrata/i.test(inc.join(' ')), inc.join(' '));
+  const a = extr.avaliarConferencia(
+    { cpf_ccb: '11122233344', data_contratacao: '2026-03-24', data_evento: '2025-04-02' },
+    { cpf_ccb: 'alta', data_contratacao: 'alta', data_evento: 'alta' }, { tipoDoc: 'CCB' });
+  assert.strictEqual(a.precisaConferencia, true);
+  assert.ok(/inconsistentes/i.test(a.motivoConferencia), a.motivoConferencia);
+});
+teste('carência NEGATIVA nunca é NEGADO automático — vai para conferência manual', () => {
+  const r = regras.calcularCaso({ parceiro: 'Granatech', fundo: 'BMP', valor_parcela: 400,
+    data_contratacao: '2026-03-24', data_evento: '2025-04-02', data_admissao: '2025-04-02',
+    motivo_desligamento_codigo: '2' });
+  assert.strictEqual(r.status, 'AGUARDANDO CONFERÊNCIA MANUAL');
+  assert.ok(r.carenciaDias < 0, 'carenciaDias=' + r.carenciaDias);
+  assert.ok(/inconsistentes/i.test(r.motivoNegacao), r.motivoNegacao);
+});
+teste('carência < 31 (mas positiva) continua NEGADO — regra de negócio real', () => {
+  const r = regras.calcularCaso({ parceiro: 'SETHI', valor_parcela: 900,
+    data_contratacao: '2025-05-15', data_evento: '2025-06-01', data_admissao: '2020-01-01',
+    motivo_desligamento_codigo: '2' });
+  assert.strictEqual(r.status, 'NEGADO');
+});
 
 console.log(`\n${ok} ok, ${falhas} falha(s).\n`);
 process.exit(falhas ? 1 : 0);

@@ -237,6 +237,18 @@ function extrairPorRegex(texto, tipoDoc) {
     }
   }
   if (parceiro && !campos.parceiro) { campos.parceiro = parceiro; confianca.parceiro = 'media'; }
+
+  // data_evento (desligamento) e data_admissao são fatos do VÍNCULO — vêm de
+  // Dataprev/TRCT. Uma CCB é contrato de EMPRÉSTIMO e um doc "DESCONHECIDO"
+  // (resumo de margem, ficha do parceiro) costuma ter uma data solta que os
+  // regex de "rescisão/admissão" capturam por engano com falsa confiança alta.
+  // Rebaixa para 'baixa' -> avaliarConferencia manda pra conferência, a menos que
+  // um Dataprev/TRCT real corrobore (mesclarExtracoes deixa o mais forte vencer).
+  if (tipoDoc === 'CCB' || tipoDoc === 'DESCONHECIDO') {
+    for (const c of ['data_evento', 'data_admissao']) {
+      if (campos[c] && confianca[c] && confianca[c] !== 'baixa') confianca[c] = 'baixa';
+    }
+  }
   return { campos, confianca, parceiro };
 }
 
@@ -271,6 +283,30 @@ function extrairCamposLocal({ nomeArquivo = '', texto = '', extensao = '', ocrCo
   return { campos, confianca, tipoDoc, fonte, precisaConferencia, motivoConferencia };
 }
 
+// Datas incoerentes entre si = leitura errada, NUNCA decisão de regra de negócio.
+// (carência negativa, admissão depois do evento, as três datas no mesmo dia...)
+// -> conferência manual, não "NEGADO automático".
+function incoerenciasDeData(campos) {
+  const fora = [];
+  const ev = campos.data_evento ? new Date(campos.data_evento) : null;
+  const ct = campos.data_contratacao ? new Date(campos.data_contratacao) : null;
+  const ad = campos.data_admissao ? new Date(campos.data_admissao) : null;
+  const ok = d => d && !isNaN(d);
+  if (ok(ev) && ok(ct) && ev < ct) {
+    fora.push(`evento (${campos.data_evento}) anterior à contratação (${campos.data_contratacao}) — carência negativa`);
+  }
+  if (ok(ev) && ok(ad) && ad > ev) {
+    fora.push(`admissão (${campos.data_admissao}) posterior ao evento (${campos.data_evento})`);
+  }
+  if (campos.data_admissao && campos.data_evento && campos.data_admissao === campos.data_evento) {
+    fora.push(`admissão e evento na mesma data (${campos.data_evento})`);
+  }
+  if (campos.data_contratacao && campos.data_evento && campos.data_contratacao === campos.data_evento) {
+    fora.push(`contratação e evento na mesma data (${campos.data_evento}) — carência zero`);
+  }
+  return fora;
+}
+
 // Decide se o caso precisa de conferência humana e monta o motivo.
 function avaliarConferencia(campos, confianca, { tipoDoc = null, ocrRuim = false, ocrConfianca = null } = {}) {
   const problemas = [];
@@ -279,11 +315,13 @@ function avaliarConferencia(campos, confianca, { tipoDoc = null, ocrRuim = false
     confianca[campo] = campos[campo] ? (confianca[campo] || 'baixa') : 'ausente';
     if (nivel === 'ausente' || nivel === 'baixa') problemas.push(campo);
   }
-  const precisaConferencia = problemas.length > 0 || ocrRuim || tipoDoc === 'DESCONHECIDO';
+  const incoerencias = incoerenciasDeData(campos);
+  const precisaConferencia = problemas.length > 0 || incoerencias.length > 0 || ocrRuim || tipoDoc === 'DESCONHECIDO';
   let motivoConferencia = null;
   if (precisaConferencia) {
     const p = [];
     if (problemas.length) p.push('Não foi possível ler automaticamente: ' + problemas.join(', '));
+    if (incoerencias.length) p.push('Datas inconsistentes — ' + incoerencias.join('; '));
     if (ocrRuim) p.push(`OCR com baixa confiança (${Math.round(ocrConfianca)}%)`);
     if (tipoDoc === 'DESCONHECIDO') p.push('Tipo de documento não reconhecido');
     motivoConferencia = p.join('. ') + '.';
@@ -327,6 +365,7 @@ module.exports = {
   extrairCamposLocal,
   mesclarExtracoes,
   avaliarConferencia,
+  incoerenciasDeData,
   detectarTipo,
   detectarParceiro,
   dataISO,
