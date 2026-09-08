@@ -12,7 +12,7 @@ const { createWorker } = require('tesseract.js');
 const pool = require('./db');
 const { calcularCaso, verificarElegibilidade, calcularCarencia, calcularFranquia, normalizarParceiro } = require('./regras');
 const { chavesIdentidade, formatarCpfCcb, analisarCpfCcb } = require('./identidade');
-const { extrairCamposLocal } = require('./extracao');
+const { extrairCamposLocal, mesclarExtracoes } = require('./extracao');
 const XLSX = require('xlsx');
 
 const app = express();
