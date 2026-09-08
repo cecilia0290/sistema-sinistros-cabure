@@ -109,6 +109,48 @@ function formatarCpf(valor) {
   return d || (valor == null ? '' : String(valor));
 }
 
+// Junta vários "brutos" de CPF/CCB num só, sem repetir: preserva o CPF e todos os
+// CCBs vistos. Aceita também o formato JÁ FORMATADO ("000.000.000-00 · CCB 123").
+//   combinarCpfCcb('CCB 99887766', '55544433322') -> '55544433322 / 99887766'
+function combinarCpfCcb(...brutos) {
+  let cpf = null;
+  const ccbs = [];
+  for (const b of brutos) {
+    if (b == null || b === '') continue;
+    const limpo = String(b).replace(/[·•]/g, ' / ').replace(/\b(ccb|cpf)\b/gi, ' ');
+    const a = analisarCpfCcb(limpo);
+    if (a.cpf) cpf = a.cpf;
+    for (const c of a.ccbs) if (!ccbs.includes(c)) ccbs.push(c);
+  }
+  const partes = [];
+  if (cpf) partes.push(cpf);
+  partes.push(...ccbs);
+  return partes.length ? partes.join(' / ') : null;
+}
+
+// Nº(s) de CCB que aparecem no TEXTO de um documento (não só num campo estruturado):
+// "Cédula de Crédito Bancário nº 88255980", "CCB nº ...", "Relatorio_Agenda_88255980".
+// Normalizados como normalizarCcb (só dígitos, sem zeros à esquerda).
+function ccbsDoTexto(texto) {
+  if (!texto) return [];
+  const t = String(texto);
+  const achados = new Set();
+  const res = [
+    /c[eé]dula\s+de\s+cr[eé]dito(?:\s+banc[aá]rio)?\s*(?:n[ºo.]|numero|n[uú]mero)?\s*[:\-]?\s*(\d{6,12})/gi,
+    /\bccb\s*(?:n[ºo.]|numero|n[uú]mero)?\s*[:\-]?\s*(\d{6,12})/gi,
+    /relatorio[_\s]*agenda[_\s]*(\d{6,12})/gi,
+    /n[ºo.]\s*da\s*c[eé]dula\s*[:\-]?\s*(\d{6,12})/gi
+  ];
+  for (const re of res) {
+    let m;
+    while ((m = re.exec(t))) {
+      const norm = String(m[1]).replace(/^0+/, '');
+      if (norm.length >= 5) achados.add(norm);
+    }
+  }
+  return [...achados];
+}
+
 // ----------------------------------------------------------------------------
 // Union-find leve: agrupa linhas que compartilham qualquer chave de identidade.
 // ----------------------------------------------------------------------------
@@ -135,6 +177,8 @@ module.exports = {
   separarCcbComposto,
   analisarCpfCcb,
   chavesIdentidade,
+  combinarCpfCcb,
+  ccbsDoTexto,
   formatarCpfCcb,
   formatarCpf,
   Uniao

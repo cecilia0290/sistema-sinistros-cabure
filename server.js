@@ -11,7 +11,7 @@ const AdmZip = require('adm-zip');
 const { createWorker } = require('tesseract.js');
 const pool = require('./db');
 const { calcularCaso, verificarElegibilidade, calcularCarencia, calcularFranquia, normalizarParceiro } = require('./regras');
-const { chavesIdentidade, formatarCpfCcb, analisarCpfCcb } = require('./identidade');
+const { chavesIdentidade, formatarCpfCcb, analisarCpfCcb, combinarCpfCcb, ccbsDoTexto } = require('./identidade');
 const { extrairCamposLocal, mesclarExtracoes } = require('./extracao');
 const XLSX = require('xlsx');
 
@@ -149,34 +149,65 @@ async function extrairTextoDeArquivo(caminhoArquivo) {
 
 // --- Vínculo entre documentos (Seção 7.3) ---
 
+// Coluna JSON do MySQL: o driver mysql2 já devolve como array/objeto. Só quando
+// vier como string (versão antiga do driver, ou valor legado) é que faz parse.
+// (O bug anterior fazia JSON.parse(<array>) -> throw -> chaves vazias -> NUNCA
+// casava um documento com um caso existente, criando duplicata sempre.)
+function lerChavesJson(v) {
+  if (Array.isArray(v)) return v;
+  if (v == null) return [];
+  if (typeof v === 'string') { try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch (e) { return []; } }
+  return [];
+}
+
 // Vincula um documento a um caso já existente.
 //  - doc com CPF + CCB  -> casa o par exato (mesmo empréstimo)
+//  - doc com CCB (do campo OU do texto) -> casa pelo CCB  (mesmo que haja CPF junto)
 //  - doc só com CPF     -> casa só se houver EXATAMENTE 1 caso desse CPF (senão fica ambíguo)
-//  - doc só com CCB     -> casa pelo CCB
-async function buscarCasoPorCpfCcb(cpfCcbBruto, nome) {
-  const { cpf, ccbs } = analisarCpfCcb(cpfCcbBruto);
+// `ccbsExtra`: CCBs achados no texto (ccbsDoTexto) — entram como candidatos de casamento.
+async function buscarCasoPorCpfCcb(cpfCcbBruto, nome, ccbsExtra = []) {
+  const { cpf, ccbs: ccbsCampo } = analisarCpfCcb(cpfCcbBruto);
+  const ccbs = [...new Set([...(ccbsCampo || []), ...(ccbsExtra || [])].filter(Boolean).map(String))];
   const [linhas] = await pool.query('SELECT id, identidade_chaves FROM casos WHERE identidade_chaves IS NOT NULL');
-  const casos = linhas.map(l => {
-    let chaves = [];
-    try { chaves = JSON.parse(l.identidade_chaves) || []; } catch (e) { /* ignora */ }
-    return { id: l.id, chaves };
-  });
+  const casos = linhas.map(l => ({ id: l.id, chaves: lerChavesJson(l.identidade_chaves) }));
 
+  // 1) par exato CPF+CCB (mesmo empréstimo)
   if (cpf && ccbs.length) {
     const alvo = ccbs.map(c => 'cpf:' + cpf + '|ccb:' + c);
     const m = casos.find(c => c.chaves.some(k => alvo.includes(k)));
     if (m) return m.id;
   }
+  // 2) CCB (mesmo que o doc também traga CPF): o CCB identifica o empréstimo.
+  //    Cobre o caso "upload com CPF" x "caso da planilha só com CCB".
+  if (ccbs.length) {
+    const m = casos.find(c => c.chaves.some(k => ccbs.some(cc => k === 'ccb:' + cc || k.endsWith('|ccb:' + cc))));
+    if (m) return m.id;
+  }
+  // 3) só CPF: casa apenas se não for ambíguo
   if (cpf) {
     const doCpf = casos.filter(c => c.chaves.some(k => k === 'cpf:' + cpf || k.startsWith('cpf:' + cpf + '|')));
     if (doCpf.length === 1) return doCpf[0].id;
-    return null; // 0 casos, ou ambíguo (vários empréstimos do mesmo CPF)
-  }
-  if (ccbs.length) {
-    const m = casos.find(c => c.chaves.some(k => ccbs.some(cc => k.endsWith('ccb:' + cc))));
-    if (m) return m.id;
   }
   return null;
+}
+
+// Sem casamento por chave: existe um caso com o MESMO nome (e parceiro compatível)?
+// Não casa sozinho — serve para o upload cair em conferência com a nota
+// "possível duplicata do caso #X", em vez de criar um caso novo às cegas.
+function normNome(s) {
+  return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+async function buscarPossivelDuplicataPorNome(nome, parceiro) {
+  const alvo = normNome(nome);
+  if (!alvo || alvo.split(' ').length < 2) return null;
+  const [linhas] = await pool.query(
+    "SELECT id, segurado, parceiro, cpf_ccb FROM casos WHERE segurado IS NOT NULL AND segurado <> ''"
+  );
+  const parc = normalizarParceiro(parceiro);
+  const m = linhas.filter(l => normNome(l.segurado) === alvo &&
+    (!parc || !l.parceiro || normalizarParceiro(l.parceiro) === parc));
+  return m.length ? { id: m[0].id, segurado: m[0].segurado, cpf_ccb: m[0].cpf_ccb, total: m.length } : null;
 }
 
 // --- Histórico / auditoria (Seção 4 e 8) ---
@@ -280,10 +311,38 @@ async function processarUnidadeDocumental(nomeReferencia, partes) {
   else if (extraida.precisaConferencia) motivoConf = extraida.motivoConferencia;
   if (!campos) { conferencia = true; motivoConf = motivoConf || 'Documento sem texto legível — precisa conferência manual.'; }
 
-  const casoExistenteId = campos ? await buscarCasoPorCpfCcb(campos.cpf_ccb, seguradoFinal) : null;
+  // Casamento com caso existente. Além do campo cpf_ccb, usa os nº de CCB que
+  // aparecem no TEXTO — assim um upload que só traz o CPF ainda casa com um caso
+  // que veio da planilha só com o CCB (era a causa das duplicatas).
+  const ccbsTexto = ccbsDoTexto(textoExtraido);
+  const casoExistenteId = (campos || ccbsTexto.length)
+    ? await buscarCasoPorCpfCcb(campos && campos.cpf_ccb, seguradoFinal, ccbsTexto)
+    : null;
+
+  // Sem casamento por chave, mas há um caso com o MESMO nome/parceiro: NÃO cria
+  // caso novo às cegas — cria já em conferência com a nota de possível duplicata.
+  let possivelDup = null;
+  if (!casoExistenteId && seguradoFinal) {
+    possivelDup = await buscarPossivelDuplicataPorNome(seguradoFinal, campos && campos.parceiro);
+    if (possivelDup) {
+      conferencia = true;
+      const nota = `Possível duplicata do caso #${possivelDup.id} (${possivelDup.segurado}${possivelDup.cpf_ccb ? ' · ' + possivelDup.cpf_ccb : ''}) — mesmo nome e parceiro, sem CPF/CCB em comum para casar automaticamente. Confirme antes de tratar como caso novo.`;
+      motivoConf = motivoConf ? (motivoConf + ' ' + nota) : nota;
+    }
+  }
 
   let casoId;
   let eraNovo;
+
+  // CPF/CCB combinado: o que já existe no caso + o do documento + os nº de CCB
+  // achados no texto. As chaves de identidade passam a ACUMULAR (CPF e CCB), então
+  // o caso casa dali pra frente tanto por um quanto pelo outro — sem duplicar.
+  let cpfCcbExistente = null;
+  if (casoExistenteId) {
+    const [rExist] = await pool.query('SELECT cpf_ccb FROM casos WHERE id = ?', [casoExistenteId]);
+    cpfCcbExistente = rExist.length ? rExist[0].cpf_ccb : null;
+  }
+  const cpfCcbCombinado = combinarCpfCcb(cpfCcbExistente, campos && campos.cpf_ccb, ...ccbsTexto);
 
   if (casoExistenteId) {
     casoId = casoExistenteId;
@@ -293,8 +352,8 @@ async function processarUnidadeDocumental(nomeReferencia, partes) {
       `\n\n--- Documento adicional: ${nomeReferencia} ---\n` + textoExtraido;
     await pool.query('UPDATE casos SET texto_extraido = ? WHERE id = ?', [textoCombinado, casoId]);
   } else {
-    const chavesIniciais = (campos || seguradoFinal)
-      ? chavesIdentidade(campos && campos.cpf_ccb, seguradoFinal)
+    const chavesIniciais = (campos || seguradoFinal || cpfCcbCombinado)
+      ? chavesIdentidade(cpfCcbCombinado, seguradoFinal)
       : [];
     const [resultado] = await pool.query(
       `INSERT INTO casos (nome_arquivo, texto_extraido, status, origem, identidade_chaves,
@@ -341,7 +400,7 @@ async function processarUnidadeDocumental(nomeReferencia, partes) {
         fonte_produto = COALESCE(?, fonte_produto)
        WHERE id = ?`,
       [
-        v(seguradoFinal), v(campos.cpf_ccb), v(campos.parceiro), v(campos.fundo), v(campos.cobertura),
+        v(seguradoFinal), v(cpfCcbCombinado), v(campos.parceiro), v(campos.fundo), v(campos.cobertura),
         v(campos.data_contratacao), v(campos.data_evento), v(campos.data_admissao), v(campos.motivo_desligamento_codigo),
         v(campos.valor_parcela), v(campos.limite_beneficio), v(campos.numero_parcelas_contratadas),
         v(campos.teto_parcela_produto), v(campos.numero_parcelas_cobertas_produto), v(campos.fonte_produto),
@@ -373,7 +432,8 @@ async function processarUnidadeDocumental(nomeReferencia, partes) {
 
   await aplicarMotorDeRegras(casoId, 'Sistema (extração local + motor de regras)');
 
-  return { casoId, eraNovo, conferencia: !!conferencia, motivoConferencia: motivoConf, tipoDoc: extraida.tipoDoc };
+  return { casoId, eraNovo, conferencia: !!conferencia, motivoConferencia: motivoConf,
+    tipoDoc: extraida.tipoDoc, possivelDuplicataDe: possivelDup ? possivelDup.id : null };
 }
 
 // Roda o motor de regras, e registra em "historico" qualquer mudança de status ou valor a pagar

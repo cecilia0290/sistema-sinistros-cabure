@@ -151,6 +151,23 @@ teste('normalizarCcb: só dígitos, sem zeros à esquerda', () => {
   assert.strictEqual(ident.normalizarCcb(''), null);
 });
 
+teste('combinarCpfCcb: junta CPF + CCB sem repetir, e faz round-trip do formato bonito', () => {
+  assert.strictEqual(ident.combinarCpfCcb('CCB 99887766', '55544433322'), '55544433322 / 99887766');
+  // o formato exibido ("· CCB ") volta a ser lido certo (era o bug do 2º upload)
+  assert.strictEqual(ident.combinarCpfCcb('555.444.333-22 · CCB 99887766', null, '99887766'), '55544433322 / 99887766');
+  assert.strictEqual(ident.combinarCpfCcb('555.444.333-22 · CCB 99887766', '12345678'), '55544433322 / 99887766 / 12345678');
+  assert.strictEqual(ident.combinarCpfCcb(null, '', undefined), null);
+  // as chaves resultantes têm CPF **e** CCB
+  assert.deepStrictEqual(ident.chavesIdentidade(ident.combinarCpfCcb('CCB 99887766', '55544433322')), ['cpf:55544433322|ccb:99887766']);
+});
+
+teste('ccbsDoTexto: acha nº de CCB no corpo do documento (cédula / CCB nº / Relatorio_Agenda)', () => {
+  assert.deepStrictEqual(ident.ccbsDoTexto('CÉDULA DE CRÉDITO BANCÁRIO Nº 88255980 24/03/2026'), ['88255980']);
+  assert.deepStrictEqual(ident.ccbsDoTexto('vinculado ao Relatorio_Agenda_86907980.pdf'), ['86907980']);
+  assert.deepStrictEqual(ident.ccbsDoTexto('CCB nº 0084559698 assinada'), ['84559698']); // zero à esquerda cai
+  assert.deepStrictEqual(ident.ccbsDoTexto('documento sem número de cédula'), []);
+});
+
 teste('conciliação parcela a parcela: 6 de 6 pagas => JÁ PAGO (completo), sai de A PAGAR', () => {
   const mapa = { segurado: 0, cpf_ccb: 1, parceiro: 2, casos_a_pagar: 3, valor_parcela: 4, data_contratacao: 5, data_evento: 6, data_admissao: 7, motivo_desligamento_codigo: 8 };
   const linhas = [{ __linha: 2, col0: 'Sethi Completo', col1: '70000000001', col2: 'SETHI', col3: 'PAGAR', col4: '900', col5: '2025-01-01', col6: '2025-06-01', col7: '2020-01-01', col8: '2' }];
