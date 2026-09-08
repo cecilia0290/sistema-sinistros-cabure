@@ -34,5 +34,33 @@
     return isNaN(d) ? String(v) : d.toLocaleDateString('pt-BR');
   }
 
-  global.Formato = { formatarCpf, formatarCpfCcb, brl, dataBR, soDigitos };
+  // Rótulo curto DERIVADO de classificacao_pagamento — é o único campo que decide
+  // se um caso está pronto pra pagar. NUNCA usar status / status_planilha (motor e
+  // etiqueta de origem da planilha) como rótulo principal numa lista de "a pagar".
+  //   'A PAGAR — próxima parcela (2/6)' -> 'PRÓXIMA PARCELA 2/6'
+  //   'A PAGAR (ex-PROGRAMADO)'         -> 'PRONTO PARA PAGAR (ex-programado)'
+  //   'A PAGAR'                         -> 'PRONTO PARA PAGAR'
+  //   qualquer outra coisa             -> o próprio texto da classificação
+  function rotuloPagamento(classificacao) {
+    const v = classificacao == null ? '' : String(classificacao).trim();
+    if (v.indexOf('próxima parcela') !== -1) {
+      const m = v.match(/\((\d+\/\d+)\)/);
+      return 'PRÓXIMA PARCELA' + (m ? ' ' + m[1] : '');
+    }
+    if (v.indexOf('ex-PROGRAMADO') !== -1) return 'PRONTO PARA PAGAR (ex-programado)';
+    if (v === 'A PAGAR') return 'PRONTO PARA PAGAR';
+    return v || '—';
+  }
+
+  // Classe de badge para o rótulo de pagamento (verde = pronto/próxima parcela).
+  function classePagamento(classificacao) {
+    const v = classificacao == null ? '' : String(classificacao);
+    if (v === 'A PAGAR' || v.indexOf('próxima parcela') !== -1 || v.indexOf('ex-PROGRAMADO') !== -1) return 'badge-sucesso';
+    if (v.indexOf('JÁ PAGO') !== -1) return 'badge-sucesso';
+    if (v.indexOf('FRANQUIA') !== -1 || v.indexOf('AGUARDANDO') !== -1 || v.indexOf('PROGRAMADO') !== -1) return 'badge-alerta';
+    if (v.indexOf('NÃO PAGAR') !== -1 || v.indexOf('BLOQUEADO') !== -1) return 'badge-perigo';
+    return 'badge-neutro';
+  }
+
+  global.Formato = { formatarCpf, formatarCpfCcb, brl, dataBR, soDigitos, rotuloPagamento, classePagamento };
 })(window);

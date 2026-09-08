@@ -140,6 +140,17 @@
           `<td><span class="badge ${paga ? 'badge-sucesso' : 'badge-neutro'}">${paga ? 'Paga (comprovante)' : 'Pendente'}</span></td></tr>`;
       }
 
+      // Rótulo principal do caso = SEMPRE derivado de classificacao_pagamento
+      // (é ele que decide o pagamento). O status do motor e a etiqueta STATUS da
+      // planilha aparecem só como referência, na seção "Análise do motor de regras".
+      const temClassif = caso.classificacao_pagamento && String(caso.classificacao_pagamento).trim() !== '';
+      const rotuloPrincipal = temClassif
+        ? Formato.rotuloPagamento(caso.classificacao_pagamento)
+        : (caso.status || '—');
+      const rotuloClasse = temClassif
+        ? Formato.classePagamento(caso.classificacao_pagamento)
+        : classeBadge(caso.status);
+
       document.getElementById('conteudo-pagina').innerHTML = `
         <a href="/index.html" class="breadcrumb">← Voltar para casos</a>
 
@@ -149,7 +160,7 @@
             <h1 class="caso-nome">${caso.segurado || caso.nome_arquivo}</h1>
             <div class="caso-sub">${caso.parceiro || 'Parceiro não identificado'}${caso.cia ? ' · CIA ' + caso.cia : ''}</div>
           </div>
-          <span class="badge ${classeBadge(caso.status)}" style="font-size:13px; padding:6px 14px;">${caso.status}</span>
+          <span class="badge ${rotuloClasse}" style="font-size:13px; padding:6px 14px;">${rotuloPrincipal}</span>
         </div>
 
         ${Number(caso.conferencia_pendente) ? `<div class="aviso-caixa" style="border-color:var(--warning-dot);">
@@ -207,7 +218,8 @@
             ${carBloco}
             ${franBloco}
           </div>
-          ${caso.motivo_negacao ? '<div class="aviso-caixa"><strong>Motivo do status atual:</strong> ' + caso.motivo_negacao + '</div>' : ''}
+          <div class="aviso-caixa">Etiqueta do motor de regras: <strong>${caso.status || '—'}</strong> — referência da análise automática (elegibilidade / carência / franquia). <strong>Não decide o pagamento</strong>: quem decide é a classificação de pagamento (${caso.classificacao_pagamento || '—'}), a partir da coluna CASOS A PAGAR e dos pagamentos confirmados.</div>
+          ${caso.motivo_negacao ? '<div class="aviso-caixa"><strong>Motivo apontado pelo motor:</strong> ' + caso.motivo_negacao + '</div>' : ''}
         </div>
 
         ${numParcelas > 0 ? `

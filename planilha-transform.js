@@ -371,9 +371,21 @@ function transformar(mapa, linhas, opcoes = {}) {
 }
 
 // Categorias da coluna CASOS A PAGAR em que um comprovante de pagamento PODE
-// reclassificar o caso (para "próxima parcela" ou "JÁ PAGO completo"). Fora daqui
-// (JÁ PAGO / PENDENTE / NÃO PAGAR) o comprovante só gera aviso.
-const ESCOPO_OVERRIDE_PAGAMENTO = new Set(['A_PAGAR', 'PROGRAMADO', 'AGUARDANDO_FRANQUIA']);
+// reclassificar o caso (para "próxima parcela" ou "JÁ PAGO completo").
+//
+// Regra de integridade (setembro/2026): se existe pagamento CONFIRMADO na tabela
+// `pagamentos_confirmados`, a documentação já foi validada e o caso não foi negado
+// — logo PENDENTE (célula CASOS A PAGAR vazia) e AGUARDANDO_DOCUMENTACAO também
+// entram no escopo. Isso corrige a base legada da SETHI (linhas "BASE LEGADA -
+// PAGO EM DIA" / "NOVO VÍNCULO" que vieram com a coluna CASOS A PAGAR em branco,
+// mas com 2-3 parcelas já pagas).
+//
+// FORA do escopo continuam JÁ PAGO (já encerrado), NÃO PAGAR / NEGADO (reversão de
+// negativa é decisão humana — ver config-pagamento.casosManuais) e NÃO RECONHECIDO
+// (texto da célula não bate com nenhum prefixo): nesses o comprovante só gera aviso.
+const ESCOPO_OVERRIDE_PAGAMENTO = new Set([
+  'A_PAGAR', 'PROGRAMADO', 'AGUARDANDO_FRANQUIA', 'PENDENTE', 'AGUARDANDO_DOCUMENTACAO'
+]);
 
 // Categoria final do CASO a partir das suas linhas. Prioridade: PROGRAMADO acima
 // de tudo (para nunca virar "a pagar" sem conferência), depois A_PAGAR, etc.

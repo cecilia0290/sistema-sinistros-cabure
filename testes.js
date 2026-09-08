@@ -204,6 +204,27 @@ teste('escopo: comprovante NÃO reclassifica caso que a planilha diz JÁ PAGO / 
   assert.strictEqual(jp.parcelas_pagas, 2);
 });
 
+teste('escopo: comprovante RECLASSIFICA caso PENDENTE (célula CASOS A PAGAR vazia) e AGUARDANDO DOC', () => {
+  const mapa = { segurado: 0, cpf_ccb: 1, parceiro: 2, casos_a_pagar: 3, valor_parcela: 4 };
+  const linhas = [
+    { __linha: 2, col0: 'Sethi Legado Vazio', col1: '008.000.061-28', col2: 'SETHI', col3: '', col4: '558' },
+    { __linha: 3, col0: 'Aguardando Doc', col1: '70000000020', col2: 'SETHI', col3: 'AGUARDANDO DOCUMENTACAO', col4: '900' }
+  ];
+  const pg = new Map([['800006128', 3], ['70000000020', 2]]);
+  const r = transformar(mapa, linhas, { pagamentosConfirmados: pg });
+  const legado = r.casos.find(c => c.segurado === 'Sethi Legado Vazio');
+  const doc = r.casos.find(c => c.segurado === 'Aguardando Doc');
+  assert.strictEqual(legado.categoria_pagamento, 'A_PAGAR');     // deixou de ser PENDENTE
+  assert.strictEqual(legado.casos_a_pagar, 1);
+  assert.strictEqual(legado.pagamento_parcial, true);
+  assert.strictEqual(legado.parcelas_pagas, 3);
+  assert.ok(/próxima parcela \(3\/6\)/.test(legado.classificacao_pagamento), legado.classificacao_pagamento);
+  assert.strictEqual(doc.categoria_pagamento, 'A_PAGAR');
+  assert.strictEqual(doc.pagamento_parcial, true);
+  assert.strictEqual(r.overrides.pagamentoForaDoEscopo, 0);      // nenhum mais "fora do escopo"
+  assert.strictEqual(r.overrides.proximaParcela, 2);
+});
+
 teste('Set (compat.) = 1 parcela paga: SETHI com 6 cobertas => segue A PAGAR', () => {
   const mapa = { segurado: 0, cpf_ccb: 1, parceiro: 2, casos_a_pagar: 3, valor_parcela: 4, data_contratacao: 5, data_evento: 6, data_admissao: 7, motivo_desligamento_codigo: 8 };
   const linhas = [{ __linha: 2, col0: 'Sethi Set', col1: '008.000.073-62', col2: 'SETHI', col3: 'PAGAR', col4: '900', col5: '2025-01-01', col6: '2025-06-01', col7: '2020-01-01', col8: '2' }];

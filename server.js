@@ -773,7 +773,9 @@ app.get('/api/por-cia/:cia', async (req, res) => {
     if (!['MetLife', 'Caburé'].includes(cia)) return res.status(400).json({ erro: 'CIA inválida.' });
     const [linhas] = await pool.query(
       `SELECT id, segurado, cpf_ccb, parceiro, fundo, cia, data_evento,
-              valor_a_pagar, valor_total_a_pagar, valor_a_pagar_final, casos_a_pagar, status
+              valor_a_pagar, valor_total_a_pagar, valor_a_pagar_final, casos_a_pagar,
+              status, status_planilha, classificacao_pagamento,
+              parcelas_pagas, parcelas_restantes
        FROM casos WHERE cia = ? ORDER BY ${CRITERIO_A_PAGAR} DESC, valor_a_pagar_final DESC, segurado ASC`,
       [cia]
     );
@@ -783,6 +785,45 @@ app.get('/api/por-cia/:cia', async (req, res) => {
   } catch (erro) {
     console.error(erro);
     res.status(500).json({ erro: 'Falha ao buscar casos por CIA: ' + erro.message });
+  }
+});
+
+// --- Checagem de integridade (SÓ ALERTA — nunca altera dado) ---------------
+// Um caso com parcelas_pagas > 0 já teve a documentação validada e não foi
+// negado: NÃO pode coexistir com uma classificação de pagamento que diga o
+// contrário (PENDENTE DE CLASSIFICAÇÃO, AGUARDANDO DOCUMENTAÇÃO, NÃO PAGAR,
+// BLOQUEADO - REEMPREGO, NÃO RECONHECIDO ou vazia). Quando aparece um caso
+// assim é sinal de erro de origem na planilha ou de pagamento casado no CCB
+// errado — a operação confere e decide à mão.
+const CLASSIF_INCOMPATIVEL_COM_PAGAMENTO = [
+  'PENDENTE DE CLASSIFICAÇÃO',
+  'AGUARDANDO DOCUMENTAÇÃO',
+  'NÃO PAGAR',
+  'BLOQUEADO - REEMPREGO',
+  'NÃO RECONHECIDO'
+];
+app.get('/api/integridade', async (req, res) => {
+  try {
+    const [linhas] = await pool.query(
+      `SELECT id, segurado, cpf_ccb, parceiro, cia,
+              parcelas_pagas, parcelas_restantes, numero_parcelas_cobertas_produto,
+              classificacao_pagamento, status, status_planilha, casos_a_pagar,
+              observacao_pagamento
+         FROM casos
+        WHERE parcelas_pagas > 0
+          AND (classificacao_pagamento IS NULL
+               OR classificacao_pagamento IN (?))
+        ORDER BY parceiro ASC, id ASC`,
+      [CLASSIF_INCOMPATIVEL_COM_PAGAMENTO]
+    );
+    res.json({
+      regra: 'parcelas_pagas > 0 é incompatível com classificação de "não pagável" / sem classificação',
+      quantidade: linhas.length,
+      casos: linhas
+    });
+  } catch (erro) {
+    console.error(erro);
+    res.status(500).json({ erro: 'Falha na checagem de integridade: ' + erro.message });
   }
 });
 

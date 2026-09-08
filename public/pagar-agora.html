@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;650&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/estilo.css">
+  <script src="/formato.js"></script>
 </head>
 <body>
   <div class="app-layout">
@@ -50,11 +51,13 @@
 
         <div class="resumo-strip" id="resumo-parceiros"></div>
 
+        <div id="alerta-integridade" class="aviso-caixa" style="display:none; border-color:var(--danger-dot, #c0392b);"></div>
+
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>ID</th><th>Segurado</th><th>CPF/CCB</th><th>Parceiro</th><th>Fundo</th><th>CIA</th>
+                <th>ID</th><th>Segurado</th><th>CPF/CCB</th><th>Parceiro</th><th>Fundo</th><th>CIA</th><th>Situação</th>
                 <th class="col-num">Parc. pg/rest</th><th class="col-num">Valor / parcela</th><th class="col-num">A pagar agora</th>
               </tr>
             </thead>
@@ -83,6 +86,7 @@
           <td>${caso.parceiro || '—'}</td>
           <td>${caso.fundo || '—'}</td>
           <td>${caso.cia || '—'}</td>
+          <td><span class="badge ${Formato.classePagamento(caso.classificacao_pagamento)}">${Formato.rotuloPagamento(caso.classificacao_pagamento)}</span></td>
           <td class="col-num col-mono">${(caso.parcelas_pagas ?? 0)}/${caso.parcelas_restantes ?? (caso.numero_parcelas_cobertas_produto ?? '—')}</td>
           <td class="col-num col-mono">${caso.valor_a_pagar != null ? fmtBRL(caso.valor_a_pagar) : '—'}</td>
           <td class="col-num col-mono col-valor">${fmtBRL(caso.valor_a_pagar_final)}</td>
@@ -93,7 +97,7 @@
       document.getElementById('mensagem-vazia').style.display = vazio ? 'block' : 'none';
       document.getElementById('rodape-tabela').innerHTML = vazio ? '' : `
         <tr class="linha-total">
-          <td colspan="8">Total (${dados.quantidade} segurado${dados.quantidade === 1 ? '' : 's'})</td>
+          <td colspan="9">Total (${dados.quantidade} segurado${dados.quantidade === 1 ? '' : 's'})</td>
           <td class="col-num col-mono">${fmtBRL(dados.total)}</td>
         </tr>`;
 
@@ -117,7 +121,25 @@
       });
     }
 
+    // Checagem de integridade — só alerta, nunca altera dado. Um caso com parcela
+    // paga não pode estar classificado como "não pagável" / sem classificação.
+    async function checarIntegridade() {
+      try {
+        const r = await fetch('/api/integridade');
+        if (!r.ok) return;
+        const d = await r.json();
+        const caixa = document.getElementById('alerta-integridade');
+        if (!d.quantidade) { caixa.style.display = 'none'; return; }
+        caixa.style.display = 'block';
+        caixa.innerHTML = `<strong>⚠ ${d.quantidade} caso(s) com parcela já paga e classificação incompatível</strong>
+          (ex.: PENDENTE DE CLASSIFICAÇÃO, BLOQUEADO, NÃO PAGAR). Se já recebeu parcela, a documentação foi
+          validada e o caso não foi negado — conferir manualmente.<br>` +
+          d.casos.map(c => `#${c.id} ${c.segurado} — ${c.parceiro || '—'} — ${c.parcelas_pagas} parc. paga(s) — <em>${c.classificacao_pagamento || '(sem classificação)'}</em>`).join('<br>');
+      } catch (e) { /* silencioso: alerta é auxiliar */ }
+    }
+
     carregarPagarAgora();
+    checarIntegridade();
   </script>
   <script src="/layout.js"></script>
 </body>

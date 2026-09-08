@@ -25,6 +25,8 @@
           <div class="header-meta" id="header-meta"></div>
         </div>
 
+        <div id="alerta-integridade" class="aviso-caixa" style="display:none; border-color:var(--danger-dot, #c0392b); margin-bottom:16px;"></div>
+
         <div class="stat-grid">
           <div class="stat-card destaque">
             <div class="stat-top"><span class="stat-label">Total a pagar</span>
@@ -245,7 +247,25 @@
       });
     }
 
+    // Checagem de integridade — só alerta, nunca altera dado. Caso com parcela paga
+    // não pode coexistir com classificação de "não pagável" / sem classificação.
+    async function checarIntegridade() {
+      try {
+        const r = await fetch('/api/integridade');
+        if (!r.ok) return;
+        const d = await r.json();
+        const caixa = document.getElementById('alerta-integridade');
+        if (!d.quantidade) { caixa.style.display = 'none'; return; }
+        caixa.style.display = 'block';
+        caixa.innerHTML = `<strong>⚠ ${d.quantidade} caso(s) com parcela já paga e classificação incompatível.</strong>
+          Se o caso já recebeu uma parcela, a documentação foi validada e ele não foi negado — não deveria estar como
+          PENDENTE DE CLASSIFICAÇÃO / BLOQUEADO / NÃO PAGAR. Conferir manualmente (o sistema não altera sozinho):<br>` +
+          d.casos.map(c => `#${c.id} <strong>${c.segurado}</strong> — ${c.parceiro || '—'} — ${c.parcelas_pagas} parc. paga(s) — <em>${c.classificacao_pagamento || '(sem classificação)'}</em>`).join('<br>');
+      } catch (e) { /* silencioso: alerta é auxiliar */ }
+    }
+
     carregarDashboard();
+    checarIntegridade();
   </script>
   <script src="/layout.js"></script>
 </body>
